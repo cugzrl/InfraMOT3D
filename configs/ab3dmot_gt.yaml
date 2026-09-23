@@ -1,0 +1,65 @@
+project:
+  seed: 0
+  data_root: data/v2x-seq-infrastructure
+  converted_root: data/converted/v2x_seq_infrastructure
+  output_root: outputs/ab3dmot_gt
+
+tracker:
+  name: AB3DMOT
+  score_threshold: 0.0
+  vehicle:
+    classes: [Car, Van, Bus, Truck]
+    association: hungarian
+    metric: giou_3d
+    threshold: -0.2
+    min_hits: 3
+    max_age: 2
+  pedestrian:
+    classes: [Pedestrian]
+    association: greedy
+    metric: giou_3d
+    threshold: -0.4
+    min_hits: 1
+    max_age: 4
+  cyclist:
+    classes: [Cyclist, Motorcyclist, Barrowlist]
+    association: hungarian
+    metric: center_distance
+    threshold: 2.0
+    min_hits: 3
+    max_age: 4
+
+evaluation:
+  iou_thresholds:
+    Car: 0.5
+    Van: 0.5
+    Bus: 0.5
+    Truck: 0.5
+    Pedestrian: 0.25
+    Cyclist: 0.25
+    Motorcyclist: 0.25
+    Barrowlist: 0.25
+
+visualization:
+  x_range: [-60.0, 60.0]
+  y_range: [-60.0, 60.0]
+  dpi: 120
+  fps: 10
+
+open3d_visualization:
+  width: 1280
+  height: 720
+  background: [0.015, 0.02, 0.03, 1.0]
+  point_size: 2.0
+  voxel_size: 0.08
+  x_range: [0.0, 125.0]
+  y_range: [-65.0, 80.0]
+  z_range: [-8.0, 8.0]
+  camera_eye: [105.0, -80.0, 58.0]
+  camera_center: [45.0, 5.0, -1.0]
+  camera_up: [0.0, 0.0, 1.0]
+  field_of_view: 52.0
+  gt_color: [0.15, 1.0, 0.25]
+  gt_line_width: 2.0
+  track_line_width: 4.0
+  fps: 10

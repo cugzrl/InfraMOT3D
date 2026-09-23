@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+data/converted/
+data/v2x-seq-infrastructure
+outputs/*
+!outputs/.gitkeep
