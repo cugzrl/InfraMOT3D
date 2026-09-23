@@ -29,6 +29,10 @@ def read_points(path):
             break
     if intensity is None:
         intensity = np.zeros((xyz.shape[0], 1), dtype=np.float32)
+    # 原始intensity大于1时按DAIR-V2X除以255
+    intensity = np.asarray(intensity, dtype=np.float32).reshape(-1, 1)
+    if intensity.size and float(np.max(intensity)) > 1.0:
+        intensity = intensity / 255.0
     points = np.concatenate([xyz, intensity], axis=1)
     if points.ndim != 2 or points.shape[1] != 4:
         raise ValueError("点云形状应为Nx4 %s" % path)
@@ -61,7 +65,7 @@ def openpcdet_to_box(box):
 
 
 def _convert_one(task):
-    source_root, output_root, frame, sequence_id, frame_index = task
+    source_root, output_root, frame, sequence_id, frame_index, overwrite = task
     import json
 
     source_root = Path(source_root)
@@ -69,7 +73,7 @@ def _convert_one(task):
     frame_id = str(frame["frame_id"])
     lidar_idx = "%s_%s" % (sequence_id, frame_id)
     point_path = output_root / "points" / ("%s.npy" % lidar_idx)
-    if not point_path.exists():
+    if overwrite or not point_path.exists():
         points = read_points(source_root / frame["pointcloud_path"])
         np.save(point_path, points)
     labels = json.loads((source_root / frame["label_lidar_std_path"]).read_text(encoding="utf-8"))
@@ -131,7 +135,7 @@ def _center_balance(source_root, frames, limit=30):
     return {"below_mean": float(np.mean(below)), "above_mean": float(np.mean(above)), "num_boxes": len(below)}
 
 
-def convert_dataset(source_root, output_root, split_file, workers=8):
+def convert_dataset(source_root, output_root, split_file, workers=8, overwrite=False):
     import json
     import multiprocessing as mp
 
@@ -161,7 +165,7 @@ def convert_dataset(source_root, output_root, split_file, workers=8):
             if sequence_id in split[name]:
                 sequence_split[sequence_id] = name
         for frame_index, frame in enumerate(sequence_frames):
-            tasks.append((str(source_root), str(output_root), frame, sequence_id, frame_index))
+            tasks.append((str(source_root), str(output_root), frame, sequence_id, frame_index, bool(overwrite)))
 
     sample_frames = [task[2] for task in tasks if sequence_split[task[3]] == "train"][:40]
     balance = _center_balance(source_root, sample_frames)
@@ -196,6 +200,8 @@ def convert_dataset(source_root, output_root, split_file, workers=8):
         "coordinate_system": "virtual_lidar",
         "point_fields": ["x", "y", "z", "intensity"],
         "point_dtype": "float32",
+        "intensity_norm": "大于1时除以255",
+        "overwrite": bool(overwrite),
         "box_order": ["x", "y", "z", "dx", "dy", "dz", "heading"],
         "box_mapping": {"dx": "length", "dy": "width", "dz": "height", "heading": "yaw"},
         "z_definition": "标注z与OpenPCDet框中心一致，不额外平移",

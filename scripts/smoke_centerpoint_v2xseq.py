@@ -1,5 +1,6 @@
 import os
 import pickle
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -10,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "third_party" / "OpenPCDet"))
 
+from inframot3d.detection.config_check import check_centerpoint_configs
+from inframot3d.detection.dataset_stats import MAJOR_CLASSES, gt_retention
 from inframot3d.detection.metrics import evaluate_frames
 from inframot3d.detection.openpcdet_adapter import load_openpcdet_cfg
 from inframot3d.detection.v2x_seq_converter import CLASS_NAMES, openpcdet_to_box
@@ -28,6 +31,8 @@ def _check_samples(data_root, converted_root):
     point_max = np.full(3, -np.inf)
     gt_min = np.full(3, np.inf)
     gt_max = np.full(3, -np.inf)
+    intensity_parts = []
+    point_cloud_range = [0, -56.0, -5.0, 204.8, 40.0, 3.0]
     for sequence_id in sequence_ids:
         rows = sorted(by_seq[sequence_id], key=lambda item: item["frame_index"])
         converted = list(read_jsonl(converted_root / "sequences" / ("%s.jsonl" % sequence_id)))
@@ -43,10 +48,15 @@ def _check_samples(data_root, converted_root):
             names = info["annos"]["name"]
             if points.shape[1] != 4 or points.dtype != np.float32 or not np.isfinite(points).all():
                 raise SystemExit("点云无效 %s" % info["frame_id"])
-            if boxes.shape[1:] != (7,) or not np.isfinite(boxes).all():
+            if boxes.ndim != 2 or boxes.shape[1] != 7 or not np.isfinite(boxes).all():
                 raise SystemExit("标注框无效 %s" % info["frame_id"])
+            if len(boxes) and np.any(boxes[:, 3:6] <= 0):
+                raise SystemExit("框尺寸无效 %s" % info["frame_id"])
             if any(name not in CLASS_NAMES for name in names.tolist()):
                 raise SystemExit("类别映射错误 %s" % info["frame_id"])
+            if points[:, 3].size and (float(points[:, 3].min()) < 0.0 or float(points[:, 3].max()) > 1.0):
+                raise SystemExit("intensity未归一化 %s" % info["frame_id"])
+            intensity_parts.append(points[:, 3])
             point_min = np.minimum(point_min, points[:, :3].min(0))
             point_max = np.maximum(point_max, points[:, :3].max(0))
             if len(boxes):
@@ -72,6 +82,19 @@ def _check_samples(data_root, converted_root):
     overlap = np.maximum(point_min, gt_min) <= np.minimum(point_max, gt_max)
     if not overlap.all():
         raise SystemExit("点云和GT范围没有重叠")
+    intensity = np.concatenate(intensity_parts) if intensity_parts else np.zeros((0,), dtype=np.float32)
+    print("intensity min %.6f" % float(intensity.min()))
+    print("intensity max %.6f" % float(intensity.max()))
+    print("intensity mean %.6f" % float(intensity.mean()))
+    for split_name in ("train", "val"):
+        with open(data_root / "infos" / ("v2x_seq_infos_%s.pkl" % split_name), "rb") as stream:
+            split_infos = pickle.load(stream)
+        rows, kept, total = gt_retention(split_infos, point_cloud_range)
+        print("%s GT中心范围内 %d / %d %.2f%%" % (split_name, kept, total, 100.0 * kept / max(total, 1)))
+        for row in rows:
+            print("%s %s %d / %d %.2f%%" % (split_name, row["class_name"], row["kept"], row["total"], row["ratio"] * 100.0))
+            if row["class_name"] in MAJOR_CLASSES and row["total"] > 0 and row["ratio"] < 0.99:
+                raise SystemExit("GT保留率过低 %s %s" % (split_name, row["class_name"]))
     print("抽检序列", sequence_ids, "帧", len(chosen))
     print("point_minmax", point_min.tolist(), point_max.tolist())
     print("gt_minmax", gt_min.tolist(), gt_max.tolist())
@@ -131,6 +154,9 @@ def _forward_backward(cfg_file):
 
 
 def _train_one_epoch(cfg_file):
+    smoke_output = ROOT / "third_party" / "OpenPCDet" / "output" / "v2x_seq_models" / "centerpoint_smoke"
+    if smoke_output.exists():
+        shutil.rmtree(smoke_output)
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = "0"
     env["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
@@ -153,6 +179,7 @@ def _train_one_epoch(cfg_file):
 
 
 def main():
+    check_centerpoint_configs(ROOT)
     data_root = ROOT / "data" / "centerpoint_v2xseq"
     converted_root = ROOT / "data" / "converted" / "v2x_seq_infrastructure"
     _, infos = _check_samples(data_root, converted_root)

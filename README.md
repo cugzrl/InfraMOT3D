@@ -26,7 +26,7 @@ OpenPCDet放在`third_party/OpenPCDet`，InfraMOT3D只做数据转换、训练�
 ```bash
 bash scripts/setup_openpcdet.sh
 export PYTHONPATH=$PWD/src
-conda run -n track python scripts/prepare_centerpoint_data.py --config configs/centerpoint_v2xseq.yaml
+conda run -n track python scripts/prepare_centerpoint_data.py --config configs/centerpoint_v2xseq.yaml --force
 bash scripts/train_centerpoint_v2xseq.sh 2 30
 conda run -n track python scripts/infer_centerpoint_v2xseq.py --config configs/centerpoint_v2xseq.yaml
 ```
