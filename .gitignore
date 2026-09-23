@@ -5,3 +5,4 @@ data/converted/
 data/v2x-seq-infrastructure
 outputs/*
 !outputs/.gitkeep
+tests/

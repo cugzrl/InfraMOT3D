@@ -2,11 +2,12 @@
 
 面向路侧点云与图像的多模态3D目标跟踪和轨迹预测工程
 
-包含V2X-Seq路侧标注转换、AB3DMOT基线、3D MOT评估和BEV可视化
+包含V2X-Seq路侧标注转换、AB3DMOT等基线算法、3D MOT评估和BEV可视化
 
 ## 环境
 
-`track`环境，Python为3.10，核心依赖为NumPy、SciPy、FilterPy、Shapely、PyYAML、Matplotlib和OpenCV
+conda`track`环境，Python为3.10，核心依赖：
+NumPy、SciPy、FilterPy、Shapely、PyYAML、Matplotlib和OpenCV
 
 ```bash
 conda run -n track python -m pytest tests -q
@@ -61,5 +62,4 @@ InfraMOT3D
 │   ├── fusion               点云图像融合算法
 │   ├── evaluation           跟踪评估
 │   └── visualization        可视化
-└── tests                    单元测试
 ```

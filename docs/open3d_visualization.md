@@ -2,33 +2,36 @@
 
 脚本使用Open3D的EGL离屏渲染，不需要桌面或可见窗口
 
-每帧读取原始路侧PCD，并叠加GT框、AB3DMOT轨迹框或二者
+## 视角
 
-- GT框使用绿色
-- 跟踪框根据轨迹ID稳定着色
-- 未匹配到当前检测的预测框降低亮度
-- 点云按照高度着色
+- `classic`保留原有深色斜视角
+- `roadside`提供前向路侧视角、浅色点云和左上角相机图像
 
-生成GT与跟踪对照视频：
+`roadside`根据当前序列统计采用前向`0～165 m`、横向`-40～40 m`和高度`-4～4 m`的范围
+
+左上角图像使用每帧相机内参、畸变参数和虚拟激光雷达到相机外参投影3D框
+
+## 生成新视角视频
 
 ```bash
 export PYTHONPATH=$PWD/src
 EGL_PLATFORM=surfaceless conda run -n track python scripts/visualize_open3d.py \
   --config configs/ab3dmot_gt.yaml \
   --sequence 0000 \
+  --view roadside \
   --mode both \
   --video
 ```
 
-生成GIF：
+## 保留原视角
 
 ```bash
 EGL_PLATFORM=surfaceless conda run -n track python scripts/visualize_open3d.py \
   --config configs/ab3dmot_gt.yaml \
   --sequence 0000 \
-  --mode track \
-  --max-frames 80 \
-  --gif
+  --view classic \
+  --mode both \
+  --video
 ```
 
-默认保留逐帧PNG，输出目录为`outputs/ab3dmot_gt/open3d_visualizations`
+可使用`--gif`生成GIF，使用`--no-image-inset`关闭左上角图像
