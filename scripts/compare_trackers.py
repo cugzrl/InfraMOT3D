@@ -5,11 +5,24 @@ from pathlib import Path
 from inframot3d.io import read_json
 
 
-TRACKERS = (
-    ("AB3DMOT", "outputs/ab3dmot_gt"),
-    ("SimpleTrack", "outputs/simpletrack_gt"),
-    ("ImmortalTracker", "outputs/immortal_gt"),
-)
+PRESETS = {
+    "gt": (
+        ("AB3DMOT", "outputs/ab3dmot_gt"),
+        ("SimpleTrack", "outputs/simpletrack_gt"),
+        ("ImmortalTracker", "outputs/immortal_gt"),
+    ),
+    "centerpoint": (
+        ("AB3DMOT", "outputs/ab3dmot_centerpoint"),
+        ("SimpleTrack", "outputs/simpletrack_centerpoint"),
+        ("ImmortalTracker", "outputs/immortal_centerpoint"),
+        ("GRAE-3DMOT", "outputs/grae_centerpoint"),
+    ),
+    "centerpoint_classic": (
+        ("AB3DMOT", "outputs/ab3dmot_centerpoint"),
+        ("SimpleTrack", "outputs/simpletrack_centerpoint"),
+        ("ImmortalTracker", "outputs/immortal_centerpoint"),
+    ),
+}
 
 COLUMNS = ("Tracker", "MOTA", "MOTP", "IDF1", "IDSW", "Frag", "Precision", "Recall", "FPS")
 
@@ -51,10 +64,11 @@ def _format(row):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--preset", choices=sorted(PRESETS), default="gt")
     parser.add_argument("--output", default="outputs/comparison.csv")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
-    rows = [_row(name, root / relative) for name, relative in TRACKERS]
+    rows = [_row(name, root / relative) for name, relative in PRESETS[args.preset]]
     output = Path(args.output)
     if not output.is_absolute():
         output = root / output

@@ -5,6 +5,8 @@ data/converted/
 data/v2x-seq-infrastructure
 data/centerpoint_v2xseq/
 third_party/OpenPCDet/
+third_party/GRAE-3DMOT/
+data/grae_v2xseq/
 outputs/*
 !outputs/.gitkeep
 tests/

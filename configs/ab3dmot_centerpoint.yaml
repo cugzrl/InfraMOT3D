@@ -4,13 +4,15 @@ project:
   converted_root: data/converted/v2x_seq_infrastructure
   output_root: outputs/ab3dmot_centerpoint
 
+split_file: configs/v2xseq_sequence_split.json
+
 input:
   type: detection
   detection_root: outputs/centerpoint/detections
 
 tracker:
   name: AB3DMOT
-  score_threshold: 0.0
+  score_threshold: 0.1
   vehicle:
     classes: [Car, Van, Bus, Truck]
     association: hungarian

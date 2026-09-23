@@ -7,6 +7,17 @@ from inframot3d.io import read_json, read_jsonl, write_json, write_jsonl
 from inframot3d.tracking import create_tracker
 
 
+def _allowed_sequences(config, sequences, split):
+    allowed = set(sequences) if sequences else None
+    if not split:
+        return allowed
+    split_file = Path(config.get("split_file", "configs/v2xseq_sequence_split.json"))
+    if not split_file.is_absolute():
+        split_file = config["_root"] / split_file
+    split_ids = set(read_json(split_file)[split])
+    return split_ids if allowed is None else allowed & split_ids
+
+
 def _resolve(root, value):
     path = Path(value)
     return path if path.is_absolute() else root / path
@@ -39,13 +50,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/ab3dmot_gt.yaml")
     parser.add_argument("--sequences", nargs="*")
+    parser.add_argument("--split", choices=["train", "val", "test"])
     args = parser.parse_args()
     config = load_config(args.config)
     converted_root = Path(config["project"]["converted_root"])
     output_root = Path(config["project"]["output_root"])
     prediction_root = output_root / "predictions"
     manifest = read_json(converted_root / "manifest.json")
-    allowed = set(args.sequences) if args.sequences else None
+    allowed = _allowed_sequences(config, args.sequences, args.split)
     input_type = (config.get("input") or {}).get("type", "ground_truth")
     detection_root = None
     total_frames = 0

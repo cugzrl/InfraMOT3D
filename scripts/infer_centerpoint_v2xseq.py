@@ -75,6 +75,7 @@ def main():
     parser.add_argument("--eval-split", default="val")
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--workers", type=int, default=2)
+    parser.add_argument("--score-threshold", type=float, default=None)
     parser.add_argument("--skip-eval", action="store_true")
     args = parser.parse_args()
     config = load_config(args.config)
@@ -82,6 +83,8 @@ def main():
     openpcdet_root = _resolve(root, config["project"]["openpcdet_root"])
     checkpoint = Path(args.ckpt) if args.ckpt else _latest_checkpoint(openpcdet_root)
     cfg = load_openpcdet_cfg(_resolve(root, config["project"]["openpcdet_cfg"]))
+    if args.score_threshold is not None:
+        cfg.MODEL.POST_PROCESSING.SCORE_THRESH = float(args.score_threshold)
     split = load_sequence_split(_resolve(root, config["split_file"]))
     allowed = set(args.sequences) if args.sequences else None
     selected = ["train", "val", "test"] if args.split == "all" else [args.split]
@@ -123,6 +126,7 @@ def main():
     detection_manifest = {
         "detector": "CenterPoint",
         "checkpoint": str(checkpoint),
+        "score_threshold": float(cfg.MODEL.POST_PROCESSING.SCORE_THRESH),
         "coordinate_system": "virtual_lidar",
         "box_order": ["x", "y", "z", "yaw", "length", "width", "height"],
         "sequences": written,

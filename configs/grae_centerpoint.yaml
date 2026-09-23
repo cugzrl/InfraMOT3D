@@ -1,0 +1,55 @@
+project:
+  seed: 0
+  data_root: data/v2x-seq-infrastructure
+  converted_root: data/converted/v2x_seq_infrastructure
+  output_root: outputs/grae_centerpoint
+  detection_root: outputs/centerpoint/detections
+  grae_root: third_party/GRAE-3DMOT
+  grae_data_root: data/grae_v2xseq
+
+split_file: configs/v2xseq_sequence_split.json
+
+classes:
+  - Car
+  - Van
+  - Bus
+  - Truck
+  - Pedestrian
+  - Cyclist
+  - Motorcyclist
+  - Barrowlist
+
+num_classes: 8
+
+input:
+  type: detection
+  detection_root: outputs/centerpoint/detections
+
+model:
+  in_channels: 128
+  layers: 3
+
+train:
+  optimizer: AdamW
+  lr: 0.0002
+  weight_decay: 0.002
+  epochs: 12
+  clip_len: 10
+  clip_stride: 3
+  score_threshold: 0.1
+
+tracker:
+  alpha: 0.24
+  conf_threshold: 0.12
+  age: 12
+
+evaluation:
+  iou_thresholds:
+    Car: 0.5
+    Van: 0.5
+    Bus: 0.5
+    Truck: 0.5
+    Pedestrian: 0.25
+    Cyclist: 0.25
+    Motorcyclist: 0.25
+    Barrowlist: 0.25
