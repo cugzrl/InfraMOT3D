@@ -16,3 +16,6 @@ dependencies:
   - pip:
       - filterpy>=1.4.5
       - pytest>=7
+      - spconv-cu118==2.3.8
+      - cumm-cu118==0.7.11
+      - SharedArray>=3.2

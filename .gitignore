@@ -3,6 +3,8 @@ __pycache__/
 .pytest_cache/
 data/converted/
 data/v2x-seq-infrastructure
+data/centerpoint_v2xseq/
+third_party/OpenPCDet/
 outputs/*
 !outputs/.gitkeep
 tests/
