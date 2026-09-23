@@ -154,7 +154,9 @@ class MultiClassAB3DMOT:
         self.score_threshold = float(tracker_config.get("score_threshold", 0.0))
         self.next_id = 1
 
-    def update(self, objects):
+    def update(self, objects, timestamp=None):
+        # 统一接口保留 timestamp。AB3DMOT 的状态转移固定按一帧，不使用时间戳。
+        del timestamp
         grouped = {class_name: [] for class_name in self.trackers}
         for value in objects:
             if value["class_name"] in grouped and float(value.get("score", 1.0)) >= self.score_threshold:

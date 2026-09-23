@@ -1,0 +1,164 @@
+project:
+  seed: 0
+  data_root: data/v2x-seq-infrastructure
+  converted_root: data/converted/v2x_seq_infrastructure
+  output_root: outputs/immortal_gt
+tracker:
+  name: ImmortalTracker
+  score_threshold: 0.0
+  frame_dt: 0.1
+  motion:
+    p_scale: 10.0
+    velocity_p_scale: 1000.0
+    q_scale: 1.0
+    r_scale: 1.0
+    score_decay: 0.01
+  vehicle:
+    classes:
+    - Car
+    - Van
+    - Bus
+    - Truck
+    association: bipartite
+    metric: giou
+    threshold: 1.5
+    min_hits: 1
+    max_age: null
+    max_output_age: 1
+    commit_modes:
+    - 1
+    output_rule: recent
+  pedestrian:
+    classes:
+    - Pedestrian
+    association: bipartite
+    metric: giou
+    threshold: 1.5
+    min_hits: 1
+    max_age: null
+    max_output_age: 1
+    commit_modes:
+    - 1
+    output_rule: recent
+  cyclist:
+    classes:
+    - Cyclist
+    - Motorcyclist
+    - Barrowlist
+    association: bipartite
+    metric: giou
+    threshold: 1.5
+    min_hits: 1
+    max_age: null
+    max_output_age: 1
+    commit_modes:
+    - 1
+    output_rule: recent
+evaluation:
+  iou_thresholds:
+    Car: 0.5
+    Van: 0.5
+    Bus: 0.5
+    Truck: 0.5
+    Pedestrian: 0.25
+    Cyclist: 0.25
+    Motorcyclist: 0.25
+    Barrowlist: 0.25
+visualization:
+  x_range:
+  - -60.0
+  - 60.0
+  y_range:
+  - -60.0
+  - 60.0
+  dpi: 120
+  fps: 10
+open3d_visualization:
+  width: 1280
+  height: 720
+  point_size: 2.0
+  voxel_size: 0.08
+  fps: 10
+  views:
+    classic:
+      background:
+      - 0.015
+      - 0.02
+      - 0.03
+      - 1.0
+      point_color_mode: height
+      x_range:
+      - 0.0
+      - 125.0
+      y_range:
+      - -65.0
+      - 80.0
+      z_range:
+      - -8.0
+      - 8.0
+      camera_eye:
+      - 105.0
+      - -80.0
+      - 58.0
+      camera_center:
+      - 45.0
+      - 5.0
+      - -1.0
+      camera_up:
+      - 0.0
+      - 0.0
+      - 1.0
+      field_of_view: 52.0
+      gt_color:
+      - 0.15
+      - 1.0
+      - 0.25
+      gt_line_width: 2.0
+      track_line_width: 4.0
+      image_inset:
+        enabled: false
+    roadside:
+      background:
+      - 0.97
+      - 0.975
+      - 0.98
+      - 1.0
+      point_color_mode: gray
+      point_color:
+      - 0.48
+      - 0.52
+      - 0.56
+      x_range:
+      - 0.0
+      - 165.0
+      y_range:
+      - -40.0
+      - 40.0
+      z_range:
+      - -4.0
+      - 4.0
+      camera_eye:
+      - -35.0
+      - 0.0
+      - 52.0
+      camera_center:
+      - 65.0
+      - 0.0
+      - -1.2
+      camera_up:
+      - 0.0
+      - 0.0
+      - 1.0
+      field_of_view: 50.0
+      gt_color:
+      - 0.35
+      - 0.82
+      - 0.56
+      gt_line_width: 2.0
+      track_line_width: 4.0
+      image_inset:
+        enabled: true
+        width: 420
+        margin: 16
+        border_width: 3
+        draw_boxes: true

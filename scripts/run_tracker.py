@@ -4,7 +4,7 @@ from pathlib import Path
 
 from inframot3d.config import load_config
 from inframot3d.io import read_json, read_jsonl, write_json, write_jsonl
-from inframot3d.tracking import MultiClassAB3DMOT
+from inframot3d.tracking import create_tracker
 
 
 def main():
@@ -25,10 +25,10 @@ def main():
         sequence_id = entry["sequence_id"]
         if allowed is not None and sequence_id not in allowed:
             continue
-        tracker = MultiClassAB3DMOT(config["tracker"])
+        tracker = create_tracker(config["tracker"])
         rows = []
         for frame in read_jsonl(converted_root / entry["path"]):
-            objects = tracker.update(frame["objects"])
+            objects = tracker.update(frame["objects"], timestamp=frame["timestamp"])
             rows.append(
                 {
                     "sequence_id": frame["sequence_id"],
