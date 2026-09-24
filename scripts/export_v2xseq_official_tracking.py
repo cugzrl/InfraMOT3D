@@ -1,6 +1,7 @@
 import argparse
 import json
 import math
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -10,6 +11,7 @@ from inframot3d.io import read_json, read_jsonl, write_json
 
 
 MERGED = {"Car": "Car", "Van": "Car", "Bus": "Car", "Truck": "Car"}
+OFFICIAL_RANGE = [0.0, -39.68, -3.0, 100.0, 39.68, 1.0]
 
 
 def _resolve(root, value):
@@ -89,26 +91,54 @@ def _kitti_line(frame_index, track_id, box, rotation, translation, score):
     return " ".join(fields)
 
 
-def _write_sequence(gt_rows, pred_rows, data_root, gt_path, pred_path):
+def _range_tools(root):
+    path = root / "third_party" / "DAIR-V2X" / "v2x" / "v2x_utils" / "gen_eval_tracking_data"
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+    from filter import RectFilter, get_lidar_3d_8points, range2box
+
+    bbox_filter = RectFilter(range2box(np.array(OFFICIAL_RANGE))[0])
+    return bbox_filter, get_lidar_3d_8points
+
+
+def _inside_official_range(box, bbox_filter, corner_fn):
+    # 与官方RectFilter一致，任一角点落入extended_range即保留
+    x, y, z, yaw, length, width, height = [float(value) for value in box]
+    corners = corner_fn([length, width, height], [x, y, z], yaw)
+    return bool(bbox_filter(corners))
+
+
+def _write_sequence(gt_rows, pred_rows, data_root, gt_path, pred_path, bbox_filter=None, corner_fn=None):
     pred_by_frame = {int(row["frame_index"]): row for row in pred_rows}
     for expected, row in enumerate(gt_rows):
         if int(row["frame_index"]) != expected:
             raise ValueError("帧序号不连续 %s" % row["frame_id"])
+    kept_frames = []
+    for row in gt_rows:
+        frame_index = int(row["frame_index"])
+        kept = []
+        for item in row["objects"]:
+            if item["class_name"] not in MERGED:
+                continue
+            if bbox_filter is not None and not _inside_official_range(item["box"], bbox_filter, corner_fn):
+                continue
+            kept.append(item)
+        if bbox_filter is not None and not kept:
+            continue
+        kept_frames.append((frame_index, row, kept))
+    remap = {frame_index: new_index for new_index, (frame_index, _, _) in enumerate(kept_frames)}
     gt_lines = []
     pred_lines = []
     calib_cache = {}
-    last_index = 0
-    for row in gt_rows:
-        frame_index = int(row["frame_index"])
-        last_index = max(last_index, frame_index)
+    last_index = max(remap.values()) if remap else 0
+    for frame_index, row, kept in kept_frames:
         frame_id = row["frame_id"]
         if frame_id not in calib_cache:
             calib_cache[frame_id] = _load_calib(data_root, frame_id)
         rotation, translation = calib_cache[frame_id]
-        for item in row["objects"]:
-            if item["class_name"] not in MERGED:
-                continue
-            gt_lines.append(_kitti_line(frame_index, item["source_track_id"], item["box"], rotation, translation, None))
+        mapped = remap[frame_index]
+        for item in kept:
+            gt_lines.append(_kitti_line(mapped, item["source_track_id"], item["box"], rotation, translation, None))
         pred_row = pred_by_frame.get(frame_index)
         if pred_row is None:
             raise ValueError("预测缺少帧 %s" % frame_id)
@@ -117,8 +147,10 @@ def _write_sequence(gt_rows, pred_rows, data_root, gt_path, pred_path):
         for item in pred_row["objects"]:
             if item["class_name"] not in MERGED:
                 continue
+            if bbox_filter is not None and not _inside_official_range(item["box"], bbox_filter, corner_fn):
+                continue
             pred_lines.append(
-                _kitti_line(frame_index, item["track_id"], item["box"], rotation, translation, item["score"])
+                _kitti_line(mapped, item["track_id"], item["box"], rotation, translation, item.get("score", 1.0))
             )
     gt_path.write_text("\n".join(gt_lines) + ("\n" if gt_lines else ""), encoding="utf-8")
     pred_path.write_text("\n".join(pred_lines) + ("\n" if pred_lines else ""), encoding="utf-8")
@@ -131,6 +163,7 @@ def main():
     parser.add_argument("--split", default="val", choices=["train", "val", "test"])
     parser.add_argument("--prediction-root", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--protocol", default="official_v2xseq_range", choices=["official_v2xseq_range", "custom_full_range"])
     args = parser.parse_args()
     config = load_config(args.config)
     root = config["_root"]
@@ -144,6 +177,10 @@ def main():
     pred_dir = output / "pred"
     gt_dir.mkdir(parents=True, exist_ok=True)
     pred_dir.mkdir(parents=True, exist_ok=True)
+    bbox_filter = None
+    corner_fn = None
+    if args.protocol == "official_v2xseq_range":
+        bbox_filter, corner_fn = _range_tools(root)
     seqmap = []
     for entry in manifest["sequences"]:
         sequence_id = entry["sequence_id"]
@@ -157,6 +194,8 @@ def main():
             data_root,
             gt_dir / ("%s.txt" % sequence_id),
             pred_dir / ("%s.txt" % sequence_id),
+            bbox_filter,
+            corner_fn,
         )
         seqmap.append("%s empty 0 %d" % (sequence_id, last_index))
         print("导出序列%s 帧%d" % (sequence_id, last_index + 1))
@@ -164,11 +203,13 @@ def main():
     write_json(
         output / "export_meta.json",
         {
+            "protocol": args.protocol,
             "supported_classes": ["Car"],
             "merged_into_car": ["Van", "Bus", "Truck"],
             "unsupported_classes": ["Pedestrian", "Cyclist", "Motorcyclist", "Barrowlist"],
             "iou": "3D",
             "iou_threshold": 0.25,
+            "extended_range": OFFICIAL_RANGE if args.protocol == "official_v2xseq_range" else None,
             "sequences": len(seqmap),
         },
     )

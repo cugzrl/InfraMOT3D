@@ -88,14 +88,20 @@ def _pick(rows):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/ab3dmot_centerpoint.yaml")
-    parser.add_argument("--split", default="train", choices=["train", "val"])
-    parser.add_argument("--output", default="outputs/threshold_sweep/sweep_train.json")
+    parser.add_argument("--output", default="outputs/threshold_sweep/sweep_calibration.json")
     args = parser.parse_args()
-    if args.split != "train":
-        raise SystemExit("阈值扫描只允许使用train")
     config = load_config(args.config)
     root = config["_root"]
-    split_ids = set(read_json(root / config["split_file"])[args.split])
+    split_payload = read_json(root / config["split_file"])
+    grae_config = yaml.safe_load((root / "configs" / "grae_centerpoint.yaml").read_text(encoding="utf-8"))
+    calibration_ids = [str(value) for value in grae_config["train"]["calibration_sequences"]]
+    val_ids = set(split_payload["val"])
+    train_ids = set(split_payload["train"])
+    if set(calibration_ids) & val_ids:
+        raise SystemExit("calibration序列不能来自val")
+    if not set(calibration_ids) <= train_ids:
+        raise SystemExit("calibration序列必须属于train")
+    split_ids = set(calibration_ids)
     detection_root = Path(config["input"]["detection_root"])
     if not detection_root.is_absolute():
         detection_root = root / detection_root
@@ -148,7 +154,8 @@ def main():
             % (threshold, row["TP"], row["FP"], row["FN"], row["Precision"], row["Recall"], row["MOTA_upper"])
         )
     payload = {
-        "split": args.split,
+        "split": "calibration",
+        "calibration_sequences": calibration_ids,
         "detection_root": str(detection_root),
         "thresholds": list(THRESHOLDS),
         "criterion": "MOTA_upper",
@@ -162,7 +169,11 @@ def main():
     write_json(output, payload)
     threshold_path = root / "configs" / "centerpoint_score_thresholds.yaml"
     threshold_path.write_text(
-        yaml.safe_dump({"score_thresholds": chosen}, allow_unicode=True, sort_keys=False),
+        yaml.safe_dump(
+            {"calibration_sequences": calibration_ids, "score_thresholds": chosen},
+            allow_unicode=True,
+            sort_keys=False,
+        ),
         encoding="utf-8",
     )
     print("已写入 %s" % threshold_path)

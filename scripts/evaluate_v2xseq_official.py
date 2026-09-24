@@ -83,7 +83,8 @@ def main():
         "unsupported_classes": meta["unsupported_classes"],
         "iou": meta["iou"],
         "iou_threshold": meta["iou_threshold"],
-        "range_filter": "未使用车端extended_range，评估全部路侧标注",
+        "protocol": meta.get("protocol", "official_v2xseq_range"),
+        "range_filter": meta.get("extended_range"),
         **parsed,
     }
     output = Path(args.output)

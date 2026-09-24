@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -86,12 +87,14 @@ def _run_grae(sequence_id, gt_rows):
         "cuda",
     )
     load_checkpoint(model, ckpt[-1], "cuda")
+    threshold_path = root / config["tracker"]["score_thresholds_file"]
+    score_thresholds = yaml.safe_load(threshold_path.read_text(encoding="utf-8"))["score_thresholds"]
     tracker = GraeTracker(
         model,
         config["classes"],
-        config["tracker"]["alpha"],
-        config["tracker"]["conf_threshold"],
-        config["tracker"]["age"],
+        score_thresholds,
+        alpha=config["tracker"]["alpha"],
+        age=config["tracker"]["age"],
     )
     detection_root = root / config["input"]["detection_root"]
     rows = []

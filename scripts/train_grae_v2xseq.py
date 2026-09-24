@@ -104,7 +104,7 @@ def main():
             "association": metrics,
         }
         torch.save(state, ckpt_dir / ("checkpoint-epoch%d.pth" % epoch))
-        key = (float(metrics["f1"]), float(metrics["auc"] or -1.0), float(metrics["positive_accuracy"]))
+        key = (float(metrics["auc"] or -1.0), float(metrics["positive_accuracy"]), float(metrics["recall"]))
         if key > best_key:
             best_key = key
             best_epoch = epoch
@@ -116,7 +116,7 @@ def main():
                 "loss": {"alpha": -1, "gamma": 1.0},
                 "epochs": history,
                 "best_epoch": best_epoch,
-                "best_metric": "f1",
+                "best_metric": "auc",
             },
         )
         auc_text = "none" if metrics["auc"] is None else "%.4f" % metrics["auc"]

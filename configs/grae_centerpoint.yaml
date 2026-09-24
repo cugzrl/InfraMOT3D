@@ -41,8 +41,9 @@ train:
 
 tracker:
   alpha: 0.24
-  conf_threshold: 0.12
   age: 12
+  score_floor: 0.01
+  score_thresholds_file: configs/centerpoint_score_thresholds.yaml
 
 evaluation:
   iou_thresholds:

@@ -190,11 +190,10 @@ def _init_features(model, instance):
     return instance
 
 
-def _advance_empty(tracked, timestamp):
-    # 空帧不计算关联损失，只推进时间和寿命
+def _advance_empty(tracked):
+    # 空帧只推进寿命，保留最后一次真实观测时间
     if tracked is None or len(tracked) == 0:
         return tracked
-    tracked.time = torch.full_like(tracked.time, float(timestamp))
     tracked.velocity = torch.zeros_like(tracked.velocity)
     tracked.age = tracked.age + 1
     return tracked
@@ -215,7 +214,7 @@ def train_clip(model, frames, device):
     losses = []
     for frame in frames:
         if len(frame["score"]) == 0:
-            tracked = _advance_empty(tracked, frame["timestamp"])
+            tracked = _advance_empty(tracked)
             continue
         current = _to_instance(frame, device)
         current.velocity = torch.zeros_like(current.velocity)
@@ -299,7 +298,7 @@ def association_metrics(model, clips, device):
             tracked = None
             for frame in frames:
                 if len(frame["score"]) == 0:
-                    tracked = _advance_empty(tracked, frame["timestamp"])
+                    tracked = _advance_empty(tracked)
                     continue
                 current = _to_instance(frame, device)
                 current.velocity = torch.zeros_like(current.velocity)
@@ -368,14 +367,28 @@ def association_metrics(model, clips, device):
 
 
 class GraeTracker:
-    def __init__(self, model, class_names, alpha=0.24, conf_threshold=0.12, age=12):
+    def __init__(self, model, class_names, score_thresholds, alpha=0.24, age=12, score_floor=0.01):
         self.model = model
         self.class_names = list(class_names)
+        self.score_thresholds = {str(name): float(value) for name, value in score_thresholds.items()}
+        # alpha保留官方二阶段代价分界的配置位，新建轨迹由类别high_threshold控制
         self.alpha = float(alpha)
-        self.conf_threshold = float(conf_threshold)
         self.age = int(age)
+        self.score_floor = float(score_floor)
         self.device = next(model.parameters()).device
         self.reset()
+
+    def _high_mask(self, instance):
+        if len(instance) == 0:
+            return torch.zeros(0, dtype=torch.bool, device=self.device)
+        limits = []
+        for class_index in instance.classes.view(-1).tolist():
+            name = self.class_names[int(class_index)]
+            if name not in self.score_thresholds:
+                raise KeyError("缺少类别阈值%s" % name)
+            limits.append(self.score_thresholds[name])
+        limit = torch.tensor(limits, device=self.device, dtype=instance.score.dtype)
+        return instance.score[:, 0] >= limit
 
     def reset(self):
         self.track = None
@@ -415,6 +428,14 @@ class GraeTracker:
             return self._update(objects, timestamp_seconds, sample_token, Instances, lap)
 
     def _update(self, objects, timestamp_seconds, sample_token, Instances, lap):
+        # 只接收类别分数和框，低分二阶段仍保留
+        cleaned = []
+        for item in objects:
+            score = float(item.get("score", 1.0))
+            if score < self.score_floor:
+                continue
+            cleaned.append({"class_name": item["class_name"], "score": score, "box": item["box"]})
+        objects = cleaned
         frame = detection_records(objects, {name: index for index, name in enumerate(self.class_names)}, timestamp_seconds)
         frame["sample_token"] = sample_token
         outputs = []
@@ -425,14 +446,13 @@ class GraeTracker:
         if len(frame["score"]) == 0:
             if self.track is not None and len(self.track):
                 self.track.velocity = torch.zeros_like(self.track.velocity)
-                self.track.time = torch.full_like(self.track.time, float(timestamp_seconds))
                 self.track = self.track[self.track.age[:, 0] < self.age]
                 self.track.age = self.track.age + 1
             return outputs
         dets = _to_instance(frame, self.device)
         dets.velocity = torch.zeros_like(dets.velocity)
         if self.track is None or len(self.track) == 0:
-            dets = dets[dets.score[:, 0] > self.conf_threshold]
+            dets = dets[self._high_mask(dets)]
             if len(dets) == 0:
                 return outputs
             dets.velocity = torch.zeros_like(dets.velocity)
@@ -466,10 +486,11 @@ class GraeTracker:
         invalid = dets.classes.view(-1, 1) != self.track.classes.view(1, -1)
         cost = affinity * 0.5 + torch.exp(-distance) * 0.5
         cost = cost + -1e6 * invalid
-        high = dets[dets.score[:, 0] > self.alpha]
-        low = dets[dets.score[:, 0] <= self.alpha]
-        high_cost = cost[dets.score[:, 0] > self.alpha]
-        low_cost = cost[dets.score[:, 0] <= self.alpha]
+        high_mask = self._high_mask(dets)
+        high = dets[high_mask]
+        low = dets[~high_mask]
+        high_cost = cost[high_mask]
+        low_cost = cost[~high_mask]
         if len(high):
             high.instance_inds = torch.full((len(high), 1), -2, dtype=torch.int64, device=self.device)
         if len(low):
@@ -508,7 +529,7 @@ class GraeTracker:
             dets = low
         matched = dets[dets.instance_inds[:, 0] > -1]
         fresh = dets[dets.instance_inds[:, 0] < 0]
-        fresh = fresh[fresh.score[:, 0] > self.conf_threshold]
+        fresh = fresh[self._high_mask(fresh)]
         if len(fresh):
             fresh.instance_inds = torch.arange(self.next_id, self.next_id + len(fresh), device=self.device).view(-1, 1)
             self.next_id += len(fresh)

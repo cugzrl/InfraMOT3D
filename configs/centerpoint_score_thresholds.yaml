@@ -1,9 +1,14 @@
+calibration_sequences:
+- 0078
+- 0087
+- 0093
+- 0094
 score_thresholds:
-  Car: 0.5
-  Van: 0.5
+  Car: 0.4
+  Van: 0.6
   Bus: 0.4
   Truck: 0.4
-  Pedestrian: 0.6
+  Pedestrian: 0.5
   Cyclist: 0.5
-  Motorcyclist: 0.5
+  Motorcyclist: 0.4
   Barrowlist: 0.6

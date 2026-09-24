@@ -88,7 +88,12 @@ def main():
         tracker = create_tracker(config["tracker"])
         rows = []
         for frame in frames:
-            objects = tracker.update(frame["objects"], timestamp=frame["timestamp"])
+            # source_track_id只留给评估，不进入跟踪器
+            objects = [
+                {"class_name": item["class_name"], "score": float(item.get("score", 1.0)), "box": item["box"]}
+                for item in frame["objects"]
+            ]
+            objects = tracker.update(objects, timestamp=frame["timestamp"])
             rows.append(
                 {
                     "sequence_id": frame["sequence_id"],

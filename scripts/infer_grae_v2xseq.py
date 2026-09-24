@@ -3,6 +3,8 @@ import sys
 import time
 from pathlib import Path
 
+import yaml
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from inframot3d.config import load_config
@@ -45,12 +47,15 @@ def main():
     checkpoint = Path(args.ckpt) if args.ckpt else _best_checkpoint(Path(config["project"]["output_root"]))
     print("使用checkpoint %s" % checkpoint.name)
     load_checkpoint(model, checkpoint, device)
+    threshold_path = _resolve(root, config["tracker"]["score_thresholds_file"])
+    score_thresholds = yaml.safe_load(threshold_path.read_text(encoding="utf-8"))["score_thresholds"]
     tracker = GraeTracker(
         model,
         config["classes"],
-        config["tracker"]["alpha"],
-        config["tracker"]["conf_threshold"],
-        config["tracker"]["age"],
+        score_thresholds,
+        alpha=config["tracker"]["alpha"],
+        age=config["tracker"]["age"],
+        score_floor=config["tracker"].get("score_floor", 0.01),
     )
     split_file = _resolve(root, config["split_file"])
     allowed = set(read_json(split_file)[args.split])

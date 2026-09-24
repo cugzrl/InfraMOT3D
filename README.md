@@ -56,11 +56,12 @@ conda run -n track python scripts/prepare_grae_v2xseq.py --config configs/grae_c
 bash scripts/train_grae_v2xseq.sh
 conda run -n track python scripts/infer_grae_v2xseq.py --config configs/grae_centerpoint.yaml --split val
 conda run -n track python scripts/evaluate.py --config configs/grae_centerpoint.yaml --split val
-conda run -n track python scripts/compare_trackers.py --preset centerpoint --output outputs/centerpoint_comparison.csv
 bash scripts/run_centerpoint_tracking_benchmark.sh
 ```
 
-GRAE训练和推理的velocity都是`[0,0]`。`tracking_id`只做关联监督，不参与速度。空检测帧保留时间戳并推进轨迹寿命。官方V2X-Seq评估只输出Car，Van、Bus、Truck并入Car，3D IoU阈值为0.25。
+全类别结果在`outputs/all_class_full_range.csv`，使用路侧全范围。官方Car结果在`outputs/official_v2xseq_car.csv`，只含合并后的Car，并使用DAIR-V2X的`extended_range`。两套protocol不能直接横向比较数值。
+
+GRAE的`velocity`为`[0,0]`。空检测帧只推进轨迹寿命，不改最后一次真实观测时间。类别`high_threshold`控制新建轨迹，低分检测只参与二阶段关联。
 
 ## 运行
 

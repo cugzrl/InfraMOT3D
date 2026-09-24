@@ -38,4 +38,5 @@ conda run -n track --no-capture-output python -u scripts/evaluate_v2xseq_officia
   --exported outputs/grae_centerpoint/official_kitti \
   --output outputs/grae_centerpoint/official_metrics.json \
   --name grae_centerpoint
-conda run -n track --no-capture-output python -u scripts/compare_trackers.py --preset centerpoint --output outputs/centerpoint_comparison.csv
+conda run -n track --no-capture-output python -u scripts/compare_trackers.py --preset centerpoint --kind custom_full_range --output outputs/all_class_full_range.csv
+conda run -n track --no-capture-output python -u scripts/compare_trackers.py --preset centerpoint --kind official_v2xseq_car --output outputs/official_v2xseq_car.csv
