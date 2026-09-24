@@ -47,13 +47,13 @@ def main():
     checkpoint = Path(args.ckpt) if args.ckpt else _best_checkpoint(Path(config["project"]["output_root"]))
     print("使用checkpoint %s" % checkpoint.name)
     load_checkpoint(model, checkpoint, device)
-    threshold_path = _resolve(root, config["tracker"]["score_thresholds_file"])
-    score_thresholds = yaml.safe_load(threshold_path.read_text(encoding="utf-8"))["score_thresholds"]
+    threshold_path = _resolve(root, config["tracker"]["birth_thresholds_file"])
+    birth_thresholds = yaml.safe_load(threshold_path.read_text(encoding="utf-8"))["score_thresholds"]
     tracker = GraeTracker(
         model,
         config["classes"],
-        score_thresholds,
-        alpha=config["tracker"]["alpha"],
+        birth_thresholds,
+        association_alpha=config["tracker"]["association_alpha"],
         age=config["tracker"]["age"],
         score_floor=config["tracker"].get("score_floor", 0.01),
     )

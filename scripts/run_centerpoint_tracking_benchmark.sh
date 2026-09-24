@@ -4,6 +4,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PYTHONPATH="${ROOT}/src:${ROOT}/third_party/GRAE-3DMOT:${PYTHONPATH:-}"
 export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION="${PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION:-python}"
 cd "${ROOT}"
+START_SECONDS="$(date +%s)"
+echo "先运行官方parity"
+mkdir -p "${ROOT}/outputs/official_parity"
+conda run -n track --no-capture-output python -u scripts/test_v2xseq_official_parity.py | tee "${ROOT}/outputs/official_parity/parity_run.log"
+grep -q '^parity_ok$' "${ROOT}/outputs/official_parity/parity_run.log"
 THRESHOLD="${ROOT}/configs/centerpoint_score_thresholds.yaml"
 if [[ ! -f "${THRESHOLD}" ]]; then
   echo "缺少 ${THRESHOLD}，先运行 scripts/sweep_tracking_threshold.py"
@@ -40,3 +45,5 @@ conda run -n track --no-capture-output python -u scripts/evaluate_v2xseq_officia
   --name grae_centerpoint
 conda run -n track --no-capture-output python -u scripts/compare_trackers.py --preset centerpoint --kind custom_full_range --output outputs/all_class_full_range.csv
 conda run -n track --no-capture-output python -u scripts/compare_trackers.py --preset centerpoint --kind official_v2xseq_car --output outputs/official_v2xseq_car.csv
+ELAPSED="$(( $(date +%s) - START_SECONDS ))"
+conda run -n track --no-capture-output python -u scripts/write_experiment_manifest.py --elapsed-seconds "${ELAPSED}"

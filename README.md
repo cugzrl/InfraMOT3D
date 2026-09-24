@@ -10,7 +10,8 @@ conda`track`环境，Python为3.10，核心依赖：
 NumPy、SciPy、FilterPy、Shapely、PyYAML、Matplotlib和OpenCV
 
 ```bash
-conda run -n track python -m pytest tests -q
+export PYTHONPATH=$PWD/src
+conda run -n track python scripts/test_v2xseq_official_parity.py
 ```
 
 ## 数据
@@ -59,9 +60,9 @@ conda run -n track python scripts/evaluate.py --config configs/grae_centerpoint.
 bash scripts/run_centerpoint_tracking_benchmark.sh
 ```
 
-全类别结果在`outputs/all_class_full_range.csv`，使用路侧全范围。官方Car结果在`outputs/official_v2xseq_car.csv`，只含合并后的Car，并使用DAIR-V2X的`extended_range`。两套protocol不能直接横向比较数值。
+`outputs/official_v2xseq_car.csv`是论文正式官方benchmark。它只含合并后的Car，范围是DAIR-V2X的`extended_range`，3D IoU阈值为0.25。`outputs/all_class_full_range.csv`只作为InfraMOT3D全类别全范围辅助诊断。两套结果协议不同，不能直接横向比较数值。
 
-GRAE的`velocity`为`[0,0]`。空检测帧只推进轨迹寿命，不改最后一次真实观测时间。类别`high_threshold`控制新建轨迹，低分检测只参与二阶段关联。
+GRAE的`velocity`为`[0,0]`。空检测帧只推进轨迹寿命，不改最后一次真实观测时间。`association_alpha`划分两阶段关联，类别birth阈值只控制新建轨迹。正式benchmark会先跑官方parity，输出`parity_ok`后才继续，并写出`outputs/experiment_manifest.json`。
 
 ## 运行
 

@@ -87,14 +87,15 @@ def _run_grae(sequence_id, gt_rows):
         "cuda",
     )
     load_checkpoint(model, ckpt[-1], "cuda")
-    threshold_path = root / config["tracker"]["score_thresholds_file"]
-    score_thresholds = yaml.safe_load(threshold_path.read_text(encoding="utf-8"))["score_thresholds"]
+    threshold_path = root / config["tracker"]["birth_thresholds_file"]
+    birth_thresholds = yaml.safe_load(threshold_path.read_text(encoding="utf-8"))["score_thresholds"]
     tracker = GraeTracker(
         model,
         config["classes"],
-        score_thresholds,
-        alpha=config["tracker"]["alpha"],
+        birth_thresholds,
+        association_alpha=config["tracker"]["association_alpha"],
         age=config["tracker"]["age"],
+        score_floor=config["tracker"].get("score_floor", 0.01),
     )
     detection_root = root / config["input"]["detection_root"]
     rows = []

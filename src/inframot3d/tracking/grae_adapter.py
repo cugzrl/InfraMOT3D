@@ -367,26 +367,33 @@ def association_metrics(model, clips, device):
 
 
 class GraeTracker:
-    def __init__(self, model, class_names, score_thresholds, alpha=0.24, age=12, score_floor=0.01):
+    def __init__(self, model, class_names, birth_thresholds, association_alpha=0.24, age=12, score_floor=0.01):
         self.model = model
         self.class_names = list(class_names)
-        self.score_thresholds = {str(name): float(value) for name, value in score_thresholds.items()}
-        # alpha保留官方二阶段代价分界的配置位，新建轨迹由类别high_threshold控制
-        self.alpha = float(alpha)
+        self.birth_thresholds = {str(name): float(value) for name, value in birth_thresholds.items()}
+        # association_alpha只划分两阶段关联，不替代类别birth阈值
+        self.association_alpha = float(association_alpha)
         self.age = int(age)
         self.score_floor = float(score_floor)
         self.device = next(model.parameters()).device
         self.reset()
 
-    def _high_mask(self, instance):
+    def _association_high_mask(self, instance):
+        # score>=association_alpha进入一阶段关联
+        if len(instance) == 0:
+            return torch.zeros(0, dtype=torch.bool, device=self.device)
+        return instance.score[:, 0] >= self.association_alpha
+
+    def _birth_mask(self, instance):
+        # 未匹配检测达到类别birth阈值才新建轨迹
         if len(instance) == 0:
             return torch.zeros(0, dtype=torch.bool, device=self.device)
         limits = []
         for class_index in instance.classes.view(-1).tolist():
             name = self.class_names[int(class_index)]
-            if name not in self.score_thresholds:
-                raise KeyError("缺少类别阈值%s" % name)
-            limits.append(self.score_thresholds[name])
+            if name not in self.birth_thresholds:
+                raise KeyError("缺少类别birth阈值%s" % name)
+            limits.append(self.birth_thresholds[name])
         limit = torch.tensor(limits, device=self.device, dtype=instance.score.dtype)
         return instance.score[:, 0] >= limit
 
@@ -452,7 +459,7 @@ class GraeTracker:
         dets = _to_instance(frame, self.device)
         dets.velocity = torch.zeros_like(dets.velocity)
         if self.track is None or len(self.track) == 0:
-            dets = dets[self._high_mask(dets)]
+            dets = dets[self._birth_mask(dets)]
             if len(dets) == 0:
                 return outputs
             dets.velocity = torch.zeros_like(dets.velocity)
@@ -486,7 +493,7 @@ class GraeTracker:
         invalid = dets.classes.view(-1, 1) != self.track.classes.view(1, -1)
         cost = affinity * 0.5 + torch.exp(-distance) * 0.5
         cost = cost + -1e6 * invalid
-        high_mask = self._high_mask(dets)
+        high_mask = self._association_high_mask(dets)
         high = dets[high_mask]
         low = dets[~high_mask]
         high_cost = cost[high_mask]
@@ -529,7 +536,7 @@ class GraeTracker:
             dets = low
         matched = dets[dets.instance_inds[:, 0] > -1]
         fresh = dets[dets.instance_inds[:, 0] < 0]
-        fresh = fresh[self._high_mask(fresh)]
+        fresh = fresh[self._birth_mask(fresh)]
         if len(fresh):
             fresh.instance_inds = torch.arange(self.next_id, self.next_id + len(fresh), device=self.device).view(-1, 1)
             self.next_id += len(fresh)

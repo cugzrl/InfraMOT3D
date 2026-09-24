@@ -28,23 +28,20 @@ def _run_epoch(config, root, checkpoint, sequences, prediction_root):
         device,
     )
     load_checkpoint(model, checkpoint, device)
-    score_thresholds = yaml.safe_load(_resolve(root, config["tracker"]["score_thresholds_file"]).read_text(encoding="utf-8"))[
+    birth_thresholds = yaml.safe_load(_resolve(root, config["tracker"]["birth_thresholds_file"]).read_text(encoding="utf-8"))[
         "score_thresholds"
     ]
     tracker = GraeTracker(
         model,
         config["classes"],
-        score_thresholds,
-        alpha=config["tracker"]["alpha"],
+        birth_thresholds,
+        association_alpha=config["tracker"]["association_alpha"],
         age=config["tracker"]["age"],
         score_floor=config["tracker"].get("score_floor", 0.01),
     )
     detection_root = _resolve(root, config["input"]["detection_root"])
-    converted_root = Path(config["project"]["converted_root"])
-    manifest = {entry["sequence_id"]: entry for entry in read_json(converted_root / "manifest.json")["sequences"]}
     for sequence_id in sequences:
         tracker.reset()
-        entry = manifest[sequence_id]
         rows = []
         detections = list(read_jsonl(detection_root / ("%s.jsonl" % sequence_id)))
         for det_row in detections:
@@ -99,11 +96,31 @@ def main():
             best = (key, epoch, checkpoint)
     shutil.copy2(best[2], ckpt_dir / "checkpoint-best.pth")
     state = torch.load(ckpt_dir / "checkpoint-best.pth", map_location="cpu", weights_only=False)
-    state["selection"] = {"metric": "idf1", "epoch": best[1], "calibration_sequences": sequences}
+    state["selection"] = {
+        "metric": "idf1",
+        "epoch": best[1],
+        "calibration_sequences": sequences,
+        "association_alpha": float(config["tracker"]["association_alpha"]),
+    }
     torch.save(state, ckpt_dir / "checkpoint-best.pth")
     write_json(
         ckpt_dir / "checkpoint_selection.json",
-        {"best_epoch": best[1], "best_metric": "idf1", "calibration_sequences": sequences, "epochs": records},
+        {
+            "best_epoch": best[1],
+            "best_metric": "idf1",
+            "association_alpha": float(config["tracker"]["association_alpha"]),
+            "calibration_sequences": sequences,
+            "epochs": records,
+        },
+    )
+    write_json(
+        ckpt_dir / "train_done.json",
+        {
+            "epochs": int(config["train"]["epochs"]),
+            "best_epoch": best[1],
+            "best_metric": "idf1",
+            "calibration_sequences": sequences,
+        },
     )
     print("best epoch %d" % best[1])
 

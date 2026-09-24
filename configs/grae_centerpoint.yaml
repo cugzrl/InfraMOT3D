@@ -40,10 +40,10 @@ train:
   calibration_sequences: ["0078", "0087", "0093", "0094"]
 
 tracker:
-  alpha: 0.24
-  age: 12
+  association_alpha: 0.24
   score_floor: 0.01
-  score_thresholds_file: configs/centerpoint_score_thresholds.yaml
+  birth_thresholds_file: configs/centerpoint_score_thresholds.yaml
+  age: 12
 
 evaluation:
   iou_thresholds:
