@@ -57,9 +57,10 @@ bash scripts/train_grae_v2xseq.sh
 conda run -n track python scripts/infer_grae_v2xseq.py --config configs/grae_centerpoint.yaml --split val
 conda run -n track python scripts/evaluate.py --config configs/grae_centerpoint.yaml --split val
 conda run -n track python scripts/compare_trackers.py --preset centerpoint --output outputs/centerpoint_comparison.csv
+bash scripts/run_centerpoint_tracking_benchmark.sh
 ```
 
-GRAE-3DMOT是面向固定路侧V2X-Seq的velocity-free adaptation，不是nuScenes原版结果的直接复现。路侧雷达不运动，因此不做ego pose转换。CenterPoint没有速度头，轨迹速度只由历史匹配中心和真实时间差估计，推理不使用GT。
+GRAE训练和推理的velocity都是`[0,0]`。`tracking_id`只做关联监督，不参与速度。空检测帧保留时间戳并推进轨迹寿命。官方V2X-Seq评估只输出Car，Van、Bus、Truck并入Car，3D IoU阈值为0.25。
 
 ## 运行
 
@@ -97,6 +98,7 @@ InfraMOT3D
 │   └── centerpoint_v2xseq  CenterPoint训练数据
 ├── third_party/OpenPCDet    检测框架
 ├── third_party/GRAE-3DMOT   GRAE跟踪官方代码
+├── third_party/DAIR-V2X     V2X-Seq官方跟踪评估
 ├── docs                     数据格式和实验说明
 ├── outputs                  预测结果、指标和可视化
 ├── scripts                  转换、检测、跟踪、评估和可视化入口

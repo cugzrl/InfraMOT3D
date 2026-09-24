@@ -274,13 +274,16 @@ class MultiClassRunner:
         if self.frame_dt <= 0.0:
             raise ValueError("frame_dt 必须为正")
         self.score_threshold = float(tracker_config.get("score_threshold", 0.0))
+        self.score_thresholds = {
+            str(name): float(value) for name, value in (tracker_config.get("score_thresholds") or {}).items()
+        }
         self.synthetic_time = 0.0
         self.time_origin = None
         self.trackers = {}
         for _, group in class_groups(tracker_config):
             for class_name in group["classes"]:
                 settings = dict(group)
-                settings["score_threshold"] = self.score_threshold
+                settings["score_threshold"] = float(self.score_thresholds.get(class_name, self.score_threshold))
                 settings["motion"] = motion
                 self.trackers[class_name] = builder(settings)
         if not self.trackers:

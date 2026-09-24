@@ -6,6 +6,7 @@ data/v2x-seq-infrastructure
 data/centerpoint_v2xseq/
 third_party/OpenPCDet/
 third_party/GRAE-3DMOT/
+third_party/DAIR-V2X/
 data/grae_v2xseq/
 outputs/*
 !outputs/.gitkeep

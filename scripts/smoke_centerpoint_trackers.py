@@ -71,7 +71,8 @@ def _run_classic(config_path, sequence_id, gt_rows):
 def _run_grae(sequence_id, gt_rows):
     config = load_config("configs/grae_centerpoint.yaml")
     root = config["_root"]
-    ckpt = sorted(
+    best = Path(config["project"]["output_root"]) / "ckpt" / "checkpoint-best.pth"
+    ckpt = [best] if best.is_file() else sorted(
         (Path(config["project"]["output_root"]) / "ckpt").glob("checkpoint-epoch*.pth"),
         key=lambda path: int(path.stem.replace("checkpoint-epoch", "")),
     )

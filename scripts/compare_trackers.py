@@ -24,7 +24,22 @@ PRESETS = {
     ),
 }
 
-COLUMNS = ("Tracker", "MOTA", "MOTP", "IDF1", "IDSW", "Frag", "Precision", "Recall", "FPS")
+COLUMNS = (
+    "Tracker",
+    "MOTA",
+    "MOTP",
+    "IDF1",
+    "IDSW",
+    "Frag",
+    "Precision",
+    "Recall",
+    "FPS",
+    "Official_MOTA",
+    "Official_MOTP",
+    "Official_AMOTA",
+    "Official_AMOTP",
+    "Official_IDS",
+)
 
 
 def _row(name, root):
@@ -35,6 +50,8 @@ def _row(name, root):
     summary = read_json(summary_path)
     runtime = read_json(runtime_path)
     metrics = summary["overall"]
+    official_path = root / "official_metrics.json"
+    official = read_json(official_path) if official_path.is_file() else {}
     return {
         "Tracker": name,
         "MOTA": float(metrics["mota"]),
@@ -45,6 +62,11 @@ def _row(name, root):
         "Precision": float(metrics["precision"]),
         "Recall": float(metrics["recall"]),
         "FPS": float(runtime["fps"]),
+        "Official_MOTA": official.get("MOTA", ""),
+        "Official_MOTP": official.get("MOTP", ""),
+        "Official_AMOTA": official.get("AMOTA", ""),
+        "Official_AMOTP": official.get("AMOTP", ""),
+        "Official_IDS": official.get("IDS", ""),
     }
 
 
@@ -59,6 +81,11 @@ def _format(row):
         f"{row['Precision']:.4f}",
         f"{row['Recall']:.4f}",
         f"{row['FPS']:.2f}",
+        "" if row["Official_MOTA"] == "" else f"{float(row['Official_MOTA']):.4f}",
+        "" if row["Official_MOTP"] == "" else f"{float(row['Official_MOTP']):.4f}",
+        "" if row["Official_AMOTA"] == "" else f"{float(row['Official_AMOTA']):.4f}",
+        "" if row["Official_AMOTP"] == "" else f"{float(row['Official_AMOTP']):.4f}",
+        "" if row["Official_IDS"] == "" else str(int(row["Official_IDS"])),
     ]
 
 

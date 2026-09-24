@@ -13,6 +13,7 @@ input:
 tracker:
   name: ImmortalTracker
   score_threshold: 0.1
+  score_thresholds_file: configs/centerpoint_score_thresholds.yaml
   frame_dt: 0.1
   motion:
     p_scale: 10.0

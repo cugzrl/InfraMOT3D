@@ -84,6 +84,7 @@ def main():
     checkpoint = Path(args.ckpt) if args.ckpt else _latest_checkpoint(openpcdet_root)
     cfg = load_openpcdet_cfg(_resolve(root, config["project"]["openpcdet_cfg"]))
     if args.score_threshold is not None:
+        cfg.MODEL.DENSE_HEAD.POST_PROCESSING.SCORE_THRESH = float(args.score_threshold)
         cfg.MODEL.POST_PROCESSING.SCORE_THRESH = float(args.score_threshold)
     split = load_sequence_split(_resolve(root, config["split_file"]))
     allowed = set(args.sequences) if args.sequences else None

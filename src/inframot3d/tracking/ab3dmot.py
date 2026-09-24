@@ -144,7 +144,9 @@ class MultiClassAB3DMOT:
     def __init__(self, tracker_config):
         self.class_settings = {}
         for group_name, group in tracker_config.items():
-            if group_name in {"name", "score_threshold"}:
+            if group_name in {"name", "score_threshold", "score_thresholds", "score_thresholds_file"}:
+                continue
+            if not isinstance(group, dict) or "classes" not in group:
                 continue
             for class_name in group["classes"]:
                 self.class_settings[class_name] = group
@@ -152,15 +154,24 @@ class MultiClassAB3DMOT:
             class_name: ClassTracker(settings) for class_name, settings in self.class_settings.items()
         }
         self.score_threshold = float(tracker_config.get("score_threshold", 0.0))
+        self.score_thresholds = {
+            str(name): float(value) for name, value in (tracker_config.get("score_thresholds") or {}).items()
+        }
         self.next_id = 1
+
+    def _class_threshold(self, class_name):
+        if class_name in self.score_thresholds:
+            return self.score_thresholds[class_name]
+        return self.score_threshold
 
     def update(self, objects, timestamp=None):
         # 统一接口保留 timestamp。AB3DMOT 的状态转移固定按一帧，不使用时间戳。
         del timestamp
         grouped = {class_name: [] for class_name in self.trackers}
         for value in objects:
-            if value["class_name"] in grouped and float(value.get("score", 1.0)) >= self.score_threshold:
-                grouped[value["class_name"]].append(value)
+            class_name = value["class_name"]
+            if class_name in grouped and float(value.get("score", 1.0)) >= self._class_threshold(class_name):
+                grouped[class_name].append(value)
         outputs = []
         for class_name in sorted(self.trackers):
             class_outputs, self.next_id = self.trackers[class_name].update(grouped[class_name], self.next_id)

@@ -2,6 +2,8 @@ import argparse
 import time
 from pathlib import Path
 
+import yaml
+
 from inframot3d.config import load_config
 from inframot3d.io import read_json, read_jsonl, write_json, write_jsonl
 from inframot3d.tracking import create_tracker
@@ -46,6 +48,20 @@ def _load_inputs(config, converted_root, entry):
     return input_type, detection_root, aligned
 
 
+def _apply_score_thresholds(config):
+    tracker = config.get("tracker") or {}
+    relative = tracker.get("score_thresholds_file")
+    if not relative:
+        return
+    path = Path(relative)
+    if not path.is_absolute():
+        path = config["_root"] / path
+    if not path.is_file():
+        raise FileNotFoundError("缺少类别分数阈值 %s" % path)
+    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    tracker["score_thresholds"] = {str(name): float(value) for name, value in loaded["score_thresholds"].items()}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/ab3dmot_gt.yaml")
@@ -53,6 +69,7 @@ def main():
     parser.add_argument("--split", choices=["train", "val", "test"])
     args = parser.parse_args()
     config = load_config(args.config)
+    _apply_score_thresholds(config)
     converted_root = Path(config["project"]["converted_root"])
     output_root = Path(config["project"]["output_root"])
     prediction_root = output_root / "predictions"

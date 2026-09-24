@@ -37,6 +37,7 @@ train:
   clip_len: 10
   clip_stride: 3
   score_threshold: 0.1
+  calibration_sequences: ["0078", "0087", "0093", "0094"]
 
 tracker:
   alpha: 0.24

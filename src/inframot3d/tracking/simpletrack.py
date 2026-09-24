@@ -15,10 +15,11 @@ class RedundancyModule:
     def resolve(self, track, detections):
         if self.mode == "default":
             return 0
+        # 低分检测只参与二阶段冗余匹配，阈值含0.01
         candidates = [
             detection
             for detection in detections
-            if float(detection.get("score", 1.0)) > self.det_score
+            if float(detection.get("score", 1.0)) >= self.det_score
         ]
         if not candidates:
             return 0

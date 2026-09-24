@@ -15,7 +15,10 @@ def _resolve(root, value):
     return path if path.is_absolute() else root / path
 
 
-def _latest_checkpoint(output_root):
+def _best_checkpoint(output_root):
+    best = output_root / "ckpt" / "checkpoint-best.pth"
+    if best.is_file():
+        return best
     checkpoints = list((output_root / "ckpt").glob("checkpoint-epoch*.pth"))
     if not checkpoints:
         raise FileNotFoundError("未找到GRAE checkpoint")
@@ -39,7 +42,8 @@ def main():
         config["num_classes"],
         device,
     )
-    checkpoint = Path(args.ckpt) if args.ckpt else _latest_checkpoint(Path(config["project"]["output_root"]))
+    checkpoint = Path(args.ckpt) if args.ckpt else _best_checkpoint(Path(config["project"]["output_root"]))
+    print("使用checkpoint %s" % checkpoint.name)
     load_checkpoint(model, checkpoint, device)
     tracker = GraeTracker(
         model,

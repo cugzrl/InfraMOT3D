@@ -13,6 +13,7 @@ input:
 tracker:
   name: AB3DMOT
   score_threshold: 0.1
+  score_thresholds_file: configs/centerpoint_score_thresholds.yaml
   vehicle:
     classes: [Car, Van, Bus, Truck]
     association: hungarian

@@ -24,7 +24,7 @@ def _track_index(mapping, source_id):
     return mapping[key]
 
 
-def _convert_sequence(detection_path, gt_path, class_to_index):
+def _convert_sequence(detection_path, gt_path, class_to_index, score_threshold):
     detections = list(read_jsonl(detection_path))
     ground_truth = list(read_jsonl(gt_path))
     if len(detections) != len(ground_truth):
@@ -54,10 +54,18 @@ def _convert_sequence(detection_path, gt_path, class_to_index):
         frame = detection_records(objects, class_to_index, int(det_row["timestamp"]) / 1e6)
         frame["sample_token"] = str(det_row["frame_id"])
         frame["sequence_id"] = str(det_row["sequence_id"])
-        tracking_ids, hit = match_detection_frame(objects, gt_objects, class_to_index)
+        # 低分框不参与身份匹配，避免抢走训练用检测的监督id
+        supervised = [item for item in objects if float(item["score"]) >= score_threshold]
+        supervised_ids, hit = match_detection_frame(supervised, gt_objects, class_to_index)
+        tracking_ids = -np.ones(len(objects), dtype=np.int64)
+        cursor = 0
+        for index, item in enumerate(objects):
+            if float(item["score"]) >= score_threshold:
+                tracking_ids[index] = supervised_ids[cursor]
+                cursor += 1
         frame["tracking_id"] = tracking_ids
         matched += hit
-        total += len(objects)
+        total += len(supervised)
         frames.append(frame)
     return frames, matched, total
 
@@ -86,6 +94,7 @@ def main():
             detection_root / ("%s.jsonl" % sequence_id),
             converted_root / entry["path"],
             class_to_index,
+            float(config["train"]["score_threshold"]),
         )
         sequences.append(frames)
         matched += hit

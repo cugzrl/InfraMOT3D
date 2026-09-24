@@ -63,30 +63,6 @@ def match_detection_frame(detections, ground_truth, class_to_index):
     return tracking_ids, matched
 
 
-def assign_causal_velocity(frames):
-    # 只用已匹配检测的历史中心和dt，不读取GT位置
-    history = {}
-    for frame in frames:
-        translation = frame["translation"]
-        timestamp = float(frame["timestamp"])
-        velocity = np.zeros((len(translation), 2), dtype=np.float32)
-        for index, track_id in enumerate(frame["tracking_id"]):
-            track_id = int(track_id)
-            if track_id < 0:
-                continue
-            center = (float(translation[index, 0]), float(translation[index, 1]))
-            past = history.setdefault(track_id, [])
-            if past:
-                previous_time, previous_x, previous_y = past[-1]
-                dt = timestamp - previous_time
-                if dt > 1e-6:
-                    velocity[index, 0] = (center[0] - previous_x) / dt
-                    velocity[index, 1] = (center[1] - previous_y) / dt
-            past.append((timestamp, center[0], center[1]))
-        frame["velocity"] = velocity
-    return frames
-
-
 def detection_records(objects, class_to_index, timestamp_seconds):
     kept = []
     for item in objects:
@@ -122,27 +98,34 @@ def detection_records(objects, class_to_index, timestamp_seconds):
     }
 
 
+def _slice_frame(frame, mask):
+    item = {
+        key: (value[mask] if isinstance(value, np.ndarray) and len(value) == len(mask) else value)
+        for key, value in frame.items()
+    }
+    count = int(np.asarray(mask).sum()) if len(mask) else 0
+    item["velocity"] = np.zeros((count, 2), dtype=np.float32)
+    return item
+
+
 def build_clips(sequence_frames, clip_len, clip_stride, score_threshold):
+    # 空检测帧保留原始时间戳，不把frame10和frame12粘成相邻帧
     clips = []
     for frames in sequence_frames:
         kept = []
         for frame in frames:
             mask = frame["score"] >= float(score_threshold)
-            if not np.any(mask):
-                continue
-            item = {key: (value[mask] if isinstance(value, np.ndarray) and len(value) == len(mask) else value) for key, value in frame.items()}
-            kept.append(item)
+            kept.append(_slice_frame(frame, mask))
         for start in range(0, max(len(kept) - clip_len + 1, 0), int(clip_stride)):
             clip = copy.deepcopy(kept[start:start + clip_len])
             if len(clip) < clip_len:
                 continue
-            assign_causal_velocity(clip)
             clips.append(clip)
             reversed_clip = copy.deepcopy(clip[::-1])
             times = [frame["timestamp"] for frame in clip]
             for frame, timestamp in zip(reversed_clip, times):
                 frame["timestamp"] = timestamp
-            assign_causal_velocity(reversed_clip)
+                frame["velocity"] = np.zeros((len(frame["score"]), 2), dtype=np.float32)
             clips.append(reversed_clip)
     return clips
 
@@ -207,26 +190,44 @@ def _init_features(model, instance):
     return instance
 
 
+def _advance_empty(tracked, timestamp):
+    # 空帧不计算关联损失，只推进时间和寿命
+    if tracked is None or len(tracked) == 0:
+        return tracked
+    tracked.time = torch.full_like(tracked.time, float(timestamp))
+    tracked.velocity = torch.zeros_like(tracked.velocity)
+    tracked.age = tracked.age + 1
+    return tracked
+
+
+def _association_target(current, tracked):
+    same = current.tracking_id[:, 0].view(-1, 1) == tracked.tracking_id[:, 0].view(1, -1)
+    valid = (current.tracking_id[:, 0].view(-1, 1) >= 0) & (tracked.tracking_id[:, 0].view(1, -1) >= 0)
+    target = (same & valid).to(dtype=torch.float32)
+    return target.T
+
+
 def train_clip(model, frames, device):
     from models.structures import Instances
     from torchvision.ops import sigmoid_focal_loss
 
-    instances = [_to_instance(frame, device) for frame in frames if len(frame["score"])]
-    if len(instances) < 2:
-        return None
-    model.eval()
-    first = _init_features(model, instances[0])
-    tracked = copy.deepcopy(first)
-    tracked.age = tracked.age + 1
-    model.train()
+    tracked = None
     losses = []
-    for frame_id in range(1, len(instances)):
-        current = instances[frame_id]
-        current.set("age", torch.zeros_like(current.score))
-        if len(tracked) == 0:
-            tracked = _init_features(model, current)
-            tracked.age = tracked.age + 1
+    for frame in frames:
+        if len(frame["score"]) == 0:
+            tracked = _advance_empty(tracked, frame["timestamp"])
             continue
+        current = _to_instance(frame, device)
+        current.velocity = torch.zeros_like(current.velocity)
+        current.set("age", torch.zeros_like(current.score))
+        if tracked is None or len(tracked) == 0:
+            model.eval()
+            tracked = _init_features(model, current)
+            tracked.velocity = torch.zeros_like(tracked.velocity)
+            tracked.age = tracked.age + 1
+            model.train()
+            continue
+        model.train()
         coordinate, spatial, spatial_dist = spatial_inputs(current, model.num_classes)
         current_time = current.time[0, 0]
         det_info = temporal_vector(current, current_time)
@@ -245,19 +246,14 @@ def train_clip(model, frames, device):
         current.set("coord_features", coordinate_feature)
         current.set("instance_feature", instance_feature)
         current.set("motion_feature", motion_feature)
-        same = current.tracking_id[:, 0].view(-1, 1) == tracked.tracking_id[:, 0].view(1, -1)
-        target = same.to(dtype=torch.float32)
-        invalid_track = tracked.tracking_id[:, 0] < 0
-        target[:, invalid_track] = 0.0
-        target = target.T
+        target = _association_target(current, tracked)
         affinity_losses = []
         for level in range(affinity_scores.shape[0]):
             pred = affinity_scores[level][..., 0]
-            affinity_losses.append(sigmoid_focal_loss(pred, target, alpha=0.25, gamma=1.0, reduction="mean"))
+            affinity_losses.append(sigmoid_focal_loss(pred, target, alpha=-1, gamma=1.0, reduction="mean"))
         losses.append(sum(affinity_losses))
         with torch.no_grad():
-            dt = (current_time - tracked.time[:, 0]).clamp(min=0).unsqueeze(-1).to(tracked.ct.dtype)
-            tracked.ct = tracked.ct + tracked.velocity[:, :2] * dt
+            tracked.velocity = torch.zeros_like(tracked.velocity)
             affinity = torch.sigmoid(affinity_scores[-1][..., 0]).T
             invalid = current.classes.view(-1, 1) != tracked.classes.view(1, -1)
             cost = affinity + -1e6 * invalid
@@ -269,10 +265,106 @@ def train_clip(model, frames, device):
                 tracked = Instances.cat([current, missed], current._img_meta)
             elif len(current):
                 tracked = current
+            tracked.velocity = torch.zeros_like(tracked.velocity)
             tracked.age = tracked.age + 1
     if not losses:
         return None
     return torch.stack(losses).mean()
+
+
+def _binary_auc(labels, scores):
+    labels = np.asarray(labels, dtype=np.int8)
+    scores = np.asarray(scores, dtype=np.float64)
+    positive = int(labels.sum())
+    negative = int(len(labels) - positive)
+    if positive == 0 or negative == 0:
+        return None
+    from scipy.stats import rankdata
+
+    ranks = rankdata(scores, method="average")
+    sum_positive = float(ranks[labels == 1].sum())
+    return (sum_positive - positive * (positive + 1) / 2.0) / (positive * negative)
+
+
+def association_metrics(model, clips, device):
+    from models.structures import Instances
+    import lap
+
+    model.eval()
+    tp = fp = tn = fn = 0
+    labels = []
+    scores = []
+    with torch.no_grad():
+        for frames in clips:
+            tracked = None
+            for frame in frames:
+                if len(frame["score"]) == 0:
+                    tracked = _advance_empty(tracked, frame["timestamp"])
+                    continue
+                current = _to_instance(frame, device)
+                current.velocity = torch.zeros_like(current.velocity)
+                current.set("age", torch.zeros_like(current.score))
+                if tracked is None or len(tracked) == 0:
+                    tracked = _init_features(model, current)
+                    tracked.velocity = torch.zeros_like(tracked.velocity)
+                    tracked.age = tracked.age + 1
+                    continue
+                coordinate, spatial, spatial_dist = spatial_inputs(current, model.num_classes)
+                current_time = current.time[0, 0]
+                temporal_info = temporal_vector(current, current_time)[:, None, :] - temporal_vector(tracked, current_time)[None, ...]
+                temporal_dist = torch.sqrt(torch.norm(current.ct.reshape(1, -1, 2) - tracked.ct.reshape(-1, 1, 2), dim=-1))
+                coordinate_feature, instance_feature, motion_feature, _, affinity_scores, _ = model(
+                    coordinate,
+                    spatial,
+                    spatial_dist,
+                    temporal_info,
+                    temporal_dist,
+                    tracked.motion_feature.clone(),
+                    first_frame=False,
+                )
+                current.set("coord_features", coordinate_feature)
+                current.set("instance_feature", instance_feature)
+                current.set("motion_feature", motion_feature)
+                target = _association_target(current, tracked)
+                probability = torch.sigmoid(affinity_scores[-1][..., 0])
+                pred_label = probability >= 0.5
+                truth = target >= 0.5
+                tp += int((pred_label & truth).sum().item())
+                fp += int((pred_label & ~truth).sum().item())
+                tn += int((~pred_label & ~truth).sum().item())
+                fn += int((~pred_label & truth).sum().item())
+                labels.append(truth.detach().reshape(-1).cpu().numpy())
+                scores.append(probability.detach().reshape(-1).cpu().numpy())
+                affinity = probability.T
+                invalid = current.classes.view(-1, 1) != tracked.classes.view(1, -1)
+                cost = affinity + -1e6 * invalid
+                _, _, columns = lap.lapjv(1 - cost.detach().cpu().numpy(), extend_cost=True, cost_limit=0.95)
+                missed = tracked[torch.as_tensor(columns, device=device) < 0] if len(tracked) else tracked
+                if len(current) and len(missed):
+                    tracked = Instances.cat([current, missed], current._img_meta)
+                elif len(current):
+                    tracked = current
+                tracked.velocity = torch.zeros_like(tracked.velocity)
+                tracked.age = tracked.age + 1
+    positive = tp + fn
+    negative = tn + fp
+    predicted = tp + fp
+    precision = tp / predicted if predicted else 0.0
+    recall = tp / positive if positive else 0.0
+    f1 = 2.0 * precision * recall / (precision + recall) if precision + recall else 0.0
+    auc = _binary_auc(np.concatenate(labels) if labels else np.zeros(0), np.concatenate(scores) if scores else np.zeros(0))
+    return {
+        "positive_accuracy": tp / positive if positive else 0.0,
+        "negative_accuracy": tn / negative if negative else 0.0,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "auc": auc,
+        "tp": tp,
+        "fp": fp,
+        "tn": tn,
+        "fn": fn,
+    }
 
 
 class GraeTracker:
@@ -289,7 +381,6 @@ class GraeTracker:
         self.track = None
         self.next_id = 0
         self.last_time = None
-        self.history = {}
 
     def _objects(self, instance, score_scale=1.0):
         outputs = []
@@ -315,23 +406,6 @@ class GraeTracker:
             )
         return outputs
 
-    def _update_velocity(self, instance, timestamp):
-        velocity = instance.velocity.clone()
-        for index in range(len(instance)):
-            track_id = int(instance.instance_inds[index].detach().cpu())
-            if track_id < 0:
-                continue
-            center = instance.translation[index, :2].detach().cpu().numpy()
-            past = self.history.setdefault(track_id, [])
-            if past:
-                previous_time, previous_x, previous_y = past[-1]
-                dt = float(timestamp) - previous_time
-                if dt > 1e-6:
-                    velocity[index, 0] = (float(center[0]) - previous_x) / dt
-                    velocity[index, 1] = (float(center[1]) - previous_y) / dt
-            past.append((float(timestamp), float(center[0]), float(center[1])))
-        instance.velocity = velocity
-
     def update(self, objects, timestamp_seconds, sample_token=""):
         from models.structures import Instances
         import lap
@@ -350,12 +424,13 @@ class GraeTracker:
         self.last_time = float(timestamp_seconds)
         if len(frame["score"]) == 0:
             if self.track is not None and len(self.track):
-                self.track.ct = self.track.ct + self.track.velocity[:, :2] * dt
-                self.track.translation[:, :2] = self.track.ct
+                self.track.velocity = torch.zeros_like(self.track.velocity)
+                self.track.time = torch.full_like(self.track.time, float(timestamp_seconds))
                 self.track = self.track[self.track.age[:, 0] < self.age]
                 self.track.age = self.track.age + 1
             return outputs
         dets = _to_instance(frame, self.device)
+        dets.velocity = torch.zeros_like(dets.velocity)
         if self.track is None or len(self.track) == 0:
             dets = dets[dets.score[:, 0] > self.conf_threshold]
             if len(dets) == 0:
@@ -363,11 +438,11 @@ class GraeTracker:
             dets.velocity = torch.zeros_like(dets.velocity)
             dets.instance_inds = torch.arange(self.next_id, self.next_id + len(dets), device=self.device).view(-1, 1)
             self.next_id += len(dets)
-            self._update_velocity(dets, timestamp_seconds)
             dets = _init_features(self.model, dets)
             self.track = copy.deepcopy(dets)
             self.track.age = self.track.age + 1
             return self._objects(dets)
+        self.track.velocity = torch.zeros_like(self.track.velocity)
         self.track.ct = self.track.ct + self.track.velocity[:, :2] * dt
         self.track.translation[:, :2] = self.track.ct
         coordinate, spatial, spatial_dist = spatial_inputs(dets, self.model.num_classes)
@@ -445,7 +520,7 @@ class GraeTracker:
             dets = fresh
         if len(dets):
             dets.set("age", torch.zeros_like(dets.score))
-            self._update_velocity(dets, timestamp_seconds)
+            dets.velocity = torch.zeros_like(dets.velocity)
         coasted = self.track[self.track.age[:, 0] < 2] if self.track is not None and len(self.track) else None
         if coasted is not None and len(coasted):
             outputs.extend(self._objects(coasted, score_scale=0.1))

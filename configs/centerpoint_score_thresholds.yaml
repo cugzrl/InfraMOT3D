@@ -1,0 +1,9 @@
+score_thresholds:
+  Car: 0.5
+  Van: 0.5
+  Bus: 0.4
+  Truck: 0.4
+  Pedestrian: 0.6
+  Cyclist: 0.5
+  Motorcyclist: 0.5
+  Barrowlist: 0.6
