@@ -345,8 +345,13 @@ def collect_events(config, scenes):
                     tracker_matches[name] = (pred_items, {gt_index: pred_index for gt_index, pred_index, _ in paired})
                 for gt_index, gt_item in enumerate(gt_items):
                     center = [float(value) for value in gt_item["box"][:2]]
+                    gid = str(gt_item["source_track_id"])
                     record = {
                         "scene_id": scene["scene_id"],
+                        "sequence_id": sequence["sequence_id"],
+                        "frame_index": int(row["frame_index"]),
+                        "timestamp": stamp,
+                        "gt_id": gid,
                         "x": center[0],
                         "y": center[1],
                         "det_miss": 1,
@@ -361,7 +366,6 @@ def collect_events(config, scenes):
                         record["det_iou"] = iou
                     for name, _ in trackers:
                         pred_items, mapping = tracker_matches[name]
-                        gid = str(gt_item["source_track_id"])
                         state = history[name].get(gid)
                         miss = 1
                         idsw = 0

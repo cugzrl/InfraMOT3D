@@ -1,0 +1,42 @@
+project:
+  data_root: data/v2x-seq-infrastructure
+  converted_root: data/converted/v2x_seq_infrastructure
+  output_root: outputs/analysis/scene_persist
+
+split_file: configs/datasets/v2xseq_sequence_split.json
+detection_root: outputs/centerpoint/detections
+
+bev:
+  x_min: 0.0
+  x_max: 100.0
+  y_min: -39.68
+  y_max: 39.68
+
+grid_sizes: [2.0, 5.0]
+primary_grid: 5.0
+min_observations:
+  "2": 5
+  "5": 20
+prior_strength: 20.0
+hard_fraction: 0.2
+history_lengths: [1, 2, 4, all]
+bootstrap_repeats: 2000
+seed: 0
+
+pose_translation_tolerance_m: 0.2
+pose_rotation_l2_tolerance: 0.02
+iou_threshold: 0.25
+match_center_gate_m: 20.0
+
+primary_tracker: SimpleTrack
+figure_history_ratio: 0.5
+figure_scenes:
+  - yizhuang09_lidar151
+
+trackers:
+  - name: AB3DMOT
+    prediction_root: outputs/ab3dmot_centerpoint/predictions
+  - name: SimpleTrack
+    prediction_root: outputs/simpletrack_centerpoint/predictions
+  - name: GRAE-3DMOT
+    prediction_root: outputs/grae_centerpoint/predictions

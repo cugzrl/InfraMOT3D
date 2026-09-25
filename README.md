@@ -159,4 +159,12 @@ conda run -n track python scripts/analysis/analyze_scene_difficulty.py --config 
 
 输出在`outputs/analysis/scene_difficulty/`。地图角色是`offline_analysis_map`。
 
+## Scene Persistence
+
+```bash
+env PYTHONPATH=src conda run -n track python scripts/analysis/run_scene_persist.py --config configs/analysis/scene_persist.yaml
+```
+
+实验按完整sequence执行历史→未来前向验证，输出在`outputs/analysis/scene_persist/`。`folds.csv`保存逐fold结果，`table.md`和`figures/`可直接用于论文整理。该实验仍是`offline_analysis_map`，不能在val或test推理时读取。
+
 BEV和Open3D可视化入口在`scripts/visualization`，Open3D说明见`docs/open3d_visualization.md`
