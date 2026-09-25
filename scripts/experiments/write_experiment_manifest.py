@@ -29,8 +29,11 @@ def main():
     root = Path(__file__).resolve().parents[2]
     experiment = yaml.safe_load((root / args.experiment).read_text(encoding="utf-8"))
     grae_config = load_config("configs/trackers/grae/centerpoint.yaml")
+    fastpoly_config = load_config("configs/trackers/fastpoly/centerpoint.yaml")
+    motformer_config = load_config("configs/trackers/3dmotformer/centerpoint.yaml")
     detection_manifest = read_json(root / "outputs" / "centerpoint" / "detection_manifest.json")
     selection = read_json(Path(grae_config["project"]["output_root"]) / "ckpt" / "checkpoint_selection.json")
+    motformer_selection = read_json(Path(motformer_config["project"]["output_root"]) / "ckpt" / "checkpoint_selection.json")
     birth_thresholds = yaml.safe_load((root / experiment["birth_thresholds"]).read_text(encoding="utf-8"))["score_thresholds"]
     val_ids = read_json(root / grae_config["split_file"])["val"]
     payload = {
@@ -43,6 +46,14 @@ def main():
         "association_alpha": float(grae_config["tracker"]["association_alpha"]),
         "score_floor": float(grae_config["tracker"]["score_floor"]),
         "dair_v2x_commit": (root / "third_party" / "DAIR-V2X" / "COMMIT").read_text(encoding="utf-8").strip(),
+        "fastpoly_commit": (root / "third_party" / "FastPoly" / "COMMIT").read_text(encoding="utf-8").strip(),
+        "fastpoly_lidar_interval": float(fastpoly_config["tracker"]["fastpoly"]["basic"]["LiDAR_interval"]),
+        "fastpoly_has_velo": False,
+        "motformer_commit": (root / "third_party" / "3DMOTFormer" / "COMMIT").read_text(encoding="utf-8").strip(),
+        "motformer_checkpoint": str(Path(motformer_config["project"]["output_root"]) / "ckpt" / "checkpoint-best.pth"),
+        "motformer_epoch": int(motformer_selection["best_epoch"]),
+        "motformer_lidar_interval": float(motformer_config["train"]["lidar_interval"]),
+        "motformer_velocity_input": [0.0, 0.0],
         "val_sequences": len(val_ids),
         "protocol": experiment["protocol"],
         "evaluation_range": list(OFFICIAL_RANGE),

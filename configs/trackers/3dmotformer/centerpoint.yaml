@@ -1,0 +1,66 @@
+project:
+  seed: 0
+  data_root: data/v2x-seq-infrastructure
+  converted_root: data/converted/v2x_seq_infrastructure
+  output_root: outputs/3dmotformer_centerpoint
+  detection_root: outputs/centerpoint/detections
+  motformer_root: third_party/3DMOTFormer
+  motformer_data_root: data/motformer_v2xseq
+
+split_file: configs/datasets/v2xseq_sequence_split.json
+
+classes:
+  - Car
+  - Van
+  - Bus
+  - Truck
+  - Pedestrian
+  - Cyclist
+  - Motorcyclist
+  - Barrowlist
+
+num_classes: 8
+
+input:
+  type: detection
+  detection_root: outputs/centerpoint/detections
+
+model:
+  d_model: 128
+  nhead: 8
+  encoder_nlayers: 1
+  decoder_nlayers: 3
+  dropout: 0.1
+  norm_first: true
+  cross_attn_value_gate: false
+  graph_truncation_dist: 5.0
+
+loss:
+  gamma: 1.0
+  velo_loss_weight: 1.0
+
+train:
+  optimizer: AdamW
+  lr: 0.001
+  epochs: 12
+  batch_size: 8
+  sample_length: 6
+  calibration_sequences: ["0078", "0087", "0093", "0094"]
+  lidar_interval: 0.1
+  max_velo: [4.0, 4.0, 5.5, 4.0, 1.0, 3.0, 13.0, 1.0]
+
+tracker:
+  max_age: 3
+  active_track_thresh: 0.01
+  score_threshold: 0.1
+
+evaluation:
+  iou_thresholds:
+    Car: 0.5
+    Van: 0.5
+    Bus: 0.5
+    Truck: 0.5
+    Pedestrian: 0.25
+    Cyclist: 0.25
+    Motorcyclist: 0.25
+    Barrowlist: 0.25

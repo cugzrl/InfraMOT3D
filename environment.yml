@@ -19,3 +19,9 @@ dependencies:
       - spconv-cu118==2.3.8
       - cumm-cu118==0.7.11
       - SharedArray>=3.2
+      - nuscenes-devkit==1.2.0
+      - torch-geometric==2.8.0
+      - numba>=0.58
+      - sympy>=1.12
+      - pyquaternion>=0.9
+      - lap>=0.5

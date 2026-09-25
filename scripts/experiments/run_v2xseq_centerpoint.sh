@@ -10,10 +10,12 @@ echo "先运行官方parity"
 mkdir -p "${ROOT}/outputs/official_parity"
 conda run -n track --no-capture-output python -u tests/evaluation/test_v2xseq_official_parity.py | tee "${ROOT}/outputs/official_parity/parity_run.log"
 grep -q '^parity_ok$' "${ROOT}/outputs/official_parity/parity_run.log"
-for name in ab3dmot simpletrack immortal; do
+for name in ab3dmot simpletrack immortal fastpoly; do
   conda run -n track --no-capture-output python -u scripts/tracking/run_tracker.py --config "configs/trackers/${name}/centerpoint.yaml" --split val
   conda run -n track --no-capture-output python -u scripts/evaluation/evaluate_mot.py --config "configs/trackers/${name}/centerpoint.yaml" --split val
 done
+conda run -n track --no-capture-output python -u scripts/tracking/infer_3dmotformer_v2xseq.py --config configs/trackers/3dmotformer/centerpoint.yaml --split val
+conda run -n track --no-capture-output python -u scripts/evaluation/evaluate_mot.py --config configs/trackers/3dmotformer/centerpoint.yaml --split val
 conda run -n track --no-capture-output python -u scripts/tracking/infer_grae_v2xseq.py --config configs/trackers/grae/centerpoint.yaml --split val
 conda run -n track --no-capture-output python -u scripts/evaluation/evaluate_mot.py --config configs/trackers/grae/centerpoint.yaml --split val
 conda run -n track --no-capture-output python -u scripts/evaluation/collect_benchmark.py --experiment configs/experiments/v2xseq_centerpoint.yaml

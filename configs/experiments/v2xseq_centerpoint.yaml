@@ -13,6 +13,12 @@ trackers:
   - name: ImmortalTracker
     config: configs/trackers/immortal/centerpoint.yaml
     kind: classic
+  - name: Fast-Poly
+    config: configs/trackers/fastpoly/centerpoint.yaml
+    kind: classic
+  - name: 3DMOTFormer
+    config: configs/trackers/3dmotformer/centerpoint.yaml
+    kind: motformer
   - name: GRAE-3DMOT
     config: configs/trackers/grae/centerpoint.yaml
     kind: grae

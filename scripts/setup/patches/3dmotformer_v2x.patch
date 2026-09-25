@@ -1,0 +1,249 @@
+diff -ruN --exclude __pycache__ --exclude COMMIT --exclude .git /tmp/mot_src/orig_mot/3DMOTFormer-9e88c243e4eacd75b11065d200e5ef3e616af474/base/base_dataset.py third_party/3DMOTFormer/base/base_dataset.py
+--- a/base/base_dataset.py
++++ b/base/base_dataset.py
+@@ -6,6 +6,8 @@
+ # Copyright (c) 2018 Victor Huang. All Rights Reserved.
+ # ------------------------------------------------------------------------
+ 
++import math
++
+ import torch
+ from torch.utils.data import Dataset
+ from pathlib import Path
+@@ -15,11 +17,62 @@
+ from tqdm import tqdm
+ from abc import abstractmethod
+ 
++import numpy as np
+ from scipy.optimize import linear_sum_assignment
++from shapely import STRtree
++from shapely.geometry import Polygon
+ 
+ from utils.data_util import NuScenesClasses
+ 
+ 
++def _motformer_corners(box):
++    # 框格式是x y z width length height yaw
++    x, y, _, width, length, _, yaw = [float(value) for value in box]
++    local = np.array(
++        [
++            [length / 2.0, width / 2.0],
++            [-length / 2.0, width / 2.0],
++            [-length / 2.0, -width / 2.0],
++            [length / 2.0, -width / 2.0],
++        ],
++        dtype=np.float64,
++    )
++    cosine, sine = math.cos(yaw), math.sin(yaw)
++    rotation = np.array([[cosine, -sine], [sine, cosine]], dtype=np.float64)
++    return local @ rotation.T + np.array([x, y])
++
++
++def _valid_polygon(corners):
++    polygon = Polygon(corners)
++    if not polygon.is_valid:
++        polygon = polygon.buffer(0)
++    return polygon
++
++
++def _bev_iou_matrix(det_box, gt_box):
++    # 只计算BEV相交的框，结果与全量IoU一致
++    det_np = det_box.detach().cpu().numpy()
++    gt_np = gt_box.detach().cpu().numpy()
++    iou = torch.zeros((det_np.shape[0], gt_np.shape[0]), dtype=torch.float32)
++    if det_np.shape[0] == 0 or gt_np.shape[0] == 0:
++        return iou
++    det_polys = [_valid_polygon(_motformer_corners(box)) for box in det_np]
++    gt_polys = [_valid_polygon(_motformer_corners(box)) for box in gt_np]
++    pairs = STRtree(gt_polys).query(det_polys, predicate="intersects")
++    if getattr(pairs, "size", 0) == 0:
++        return iou
++    for row, column in zip(pairs[0].tolist(), pairs[1].tolist()):
++        poly_a = det_polys[int(row)]
++        poly_b = gt_polys[int(column)]
++        if poly_a.is_empty or poly_b.is_empty:
++            continue
++        intersection = poly_a.intersection(poly_b).area
++        union = poly_a.area + poly_b.area - intersection
++        if union > 0.0:
++            iou[int(row), int(column)] = float(intersection / union)
++    return iou
++
++
+ class BaseDataset(Dataset):
+     def __init__(self, data_dir, 
+                        split, 
+@@ -127,18 +180,12 @@
+         '''
+         cls_valid_mask = torch.eq(det_cls.unsqueeze(1), gt_cls.unsqueeze(0))
+ 
+-        if self.iou_matching:
+-            # from ops.iou3d import iou3d_nms_utils
+-            # iou = iou3d_nms_utils.boxes_iou_bev_cpu(det_box, gt_box)
+-            # iou_gpu = iou3d_nms_utils.boxes_iou_bev(det_box.cuda(), gt_box.cuda())
++        if det_box.numel() == 0 or gt_box.numel() == 0:
++            return []
+ 
+-            import iou3d_nms_cuda
++        if self.iou_matching:
+             assert det_box.shape[1] == gt_box.shape[1] == 7
+-            iou = torch.FloatTensor(torch.Size((det_box.shape[0], gt_box.shape[0]))).zero_()
+-
+-            iou3d_nms_cuda.boxes_iou_bev_cpu(det_box.contiguous(), gt_box.contiguous(), iou)
+-
+-
++            iou = _bev_iou_matrix(det_box, gt_box)
+             iou_valid_mask = iou > 0
+             valid_mask = torch.logical_and(cls_valid_mask, iou_valid_mask)
+             invalid_mask = torch.logical_not(valid_mask)
+@@ -187,7 +234,7 @@
+                 gt_cls = frame['gts']['class']
+ 
+                 # Avoid tracking id match across batch elements
+-                gt_track_id = frame['gts']['tracking_id'] + scene_id * 1000
++                gt_track_id = frame['gts']['tracking_id'] + scene_id * 100000
+                 gt_next_exist = frame['gts']['next_exist']
+                 get_next_trans = frame['gts']['next_translation']
+                 get_next_trans = get_next_trans.view(get_next_trans.size(0), 3)
+@@ -199,7 +246,10 @@
+                 num_all_gts += frame['num_gts']
+                 num_all_matched_gts += len(matches)
+ 
+-                matches = torch.Tensor(matches).view(-1, 2).long()
++                if len(matches) == 0:
++                    matches = torch.zeros((0, 2), dtype=torch.long)
++                else:
++                    matches = torch.tensor(matches, dtype=torch.long).view(-1, 2)
+                 num_det = det_box.size(0)
+                 # For unmatched dets, the value of the matching are -1, otherwise are the matched track ID
+                 det_tracking_id = - torch.ones(num_det, dtype=torch.int)
+diff -ruN --exclude __pycache__ --exclude COMMIT --exclude .git /tmp/mot_src/orig_mot/3DMOTFormer-9e88c243e4eacd75b11065d200e5ef3e616af474/dataset/patchwise_dataset.py third_party/3DMOTFormer/dataset/patchwise_dataset.py
+--- a/dataset/patchwise_dataset.py
++++ b/dataset/patchwise_dataset.py
+@@ -74,7 +74,7 @@
+             det_matched_track_id = self.data[seq_id][frame_id + i]['det_matched_track_id']
+             det_next_exist = self.data[seq_id][frame_id + i]['det_next_exist']
+             det_next_trans = self.data[seq_id][frame_id + i]['det_next_trans']
+-            velo_target = (det_next_trans - detections['box'][:, :2]) * 2.0
++            velo_target = (det_next_trans - detections['box'][:, :2]) / float(graph_util.LIDAR_INTERVAL)
+ 
+             det_box = detections['box']
+             det_velo = detections['velocity']
+diff -ruN --exclude __pycache__ --exclude COMMIT --exclude .git /tmp/mot_src/orig_mot/3DMOTFormer-9e88c243e4eacd75b11065d200e5ef3e616af474/dataset/sequential_dataset.py third_party/3DMOTFormer/dataset/sequential_dataset.py
+--- a/dataset/sequential_dataset.py
++++ b/dataset/sequential_dataset.py
+@@ -29,7 +29,7 @@
+         det_matched_track_id = self.data[idx]['det_matched_track_id']
+         det_next_exist = self.data[idx]['det_next_exist']
+         det_next_trans = self.data[idx]['det_next_trans']
+-        velo_target = (det_next_trans - detections['box'][:, :2]) * 2.0
++        velo_target = (det_next_trans - detections['box'][:, :2]) / float(graph_util.LIDAR_INTERVAL)
+ 
+         det_box = detections['box']
+         det_velo = detections['velocity']
+diff -ruN --exclude __pycache__ --exclude COMMIT --exclude .git /tmp/mot_src/orig_mot/3DMOTFormer-9e88c243e4eacd75b11065d200e5ef3e616af474/eval/tracker.py third_party/3DMOTFormer/eval/tracker.py
+--- a/eval/tracker.py
++++ b/eval/tracker.py
+@@ -201,7 +201,8 @@
+         
+         for j in inactive_tracks:
+             track = self.track_info[j]
+-            track["translation"][:2] += track["velocity"] * 0.5
++            # 路侧帧间隔由LIDAR_INTERVAL给出，不再使用nuScenes的0.5秒
++            track["translation"][:2] += track["velocity"] * float(graph_util.LIDAR_INTERVAL)
+             track["age"] += 1
+             track["active"] = 0
+             new_track_info.append(track)
+diff -ruN --exclude __pycache__ --exclude COMMIT --exclude .git /tmp/mot_src/orig_mot/3DMOTFormer-9e88c243e4eacd75b11065d200e5ef3e616af474/model/edge_augment_transformer_conv.py third_party/3DMOTFormer/model/edge_augment_transformer_conv.py
+--- a/model/edge_augment_transformer_conv.py
++++ b/model/edge_augment_transformer_conv.py
+@@ -12,7 +12,12 @@
+ import torch
+ import torch.nn.functional as F
+ from torch import Tensor
+-from torch_sparse import SparseTensor
++try:
++    from torch_sparse import SparseTensor
++except ImportError:
++    # 当前推理只走edge_index，不依赖torch_sparse
++    class SparseTensor:
++        pass
+ 
+ from torch_geometric.nn.conv import MessagePassing
+ from torch_geometric.nn.dense.linear import Linear
+@@ -85,6 +90,8 @@
+                 self.lin_beta = self.register_parameter('lin_beta', None)
+ 
+         self.reset_parameters()
++        # PyG 2.8生成的propagate签名不包含edge_attn，改回原始实现
++        self.propagate = MessagePassing.propagate.__get__(self, MessagePassing)
+ 
+     def reset_parameters(self):
+         self.lin_key.reset_parameters()
+diff -ruN --exclude __pycache__ --exclude COMMIT --exclude .git /tmp/mot_src/orig_mot/3DMOTFormer-9e88c243e4eacd75b11065d200e5ef3e616af474/model/model.py third_party/3DMOTFormer/model/model.py
+--- a/model/model.py
++++ b/model/model.py
+@@ -24,7 +24,8 @@
+         self.edge_attr_cross_attn = True
+         self.cross_attn_value_gate = cross_attn_value_gate
+ 
+-        self.embedding = nn.Linear(17, self.d_model)
++        # 7维框加2维速度、类别one-hot和1维分数
++        self.embedding = nn.Linear(10 + int(num_classes), self.d_model)
+         self.embedding_edge = nn.Linear(10, self.d_model)
+ 
+         spatial_encoder_layer = TransformerEncoderLayer(self.d_model, self.nhead, self.dropout_p,
+diff -ruN --exclude __pycache__ --exclude COMMIT --exclude .git /tmp/mot_src/orig_mot/3DMOTFormer-9e88c243e4eacd75b11065d200e5ef3e616af474/trainer/trainer.py third_party/3DMOTFormer/trainer/trainer.py
+--- a/trainer/trainer.py
++++ b/trainer/trainer.py
+@@ -12,7 +12,8 @@
+ 
+ import torch
+ from torch_geometric.data import Data, Batch
+-from torch_geometric.utils.unbatch import unbatch
++# PyG 2.8把unbatch放在utils包内
++from torch_geometric.utils import unbatch
+ 
+ from base import BaseTrainer
+ from utils import inf_loop, MetricTracker
+diff -ruN --exclude __pycache__ --exclude COMMIT --exclude .git /tmp/mot_src/orig_mot/3DMOTFormer-9e88c243e4eacd75b11065d200e5ef3e616af474/utils/graph_util.py third_party/3DMOTFormer/utils/graph_util.py
+--- a/utils/graph_util.py
++++ b/utils/graph_util.py
+@@ -9,20 +9,26 @@
+ 
+ 
+ from torch_geometric.data import Batch
+-from torch_geometric.utils.unbatch import unbatch
++# PyG 2.8把unbatch放在utils包内
++from torch_geometric.utils import unbatch
+ 
+ from utils.data_util import BipartiteData
+ 
+ def adj_to_edge_index(adj):
+     return torch.nonzero(adj).transpose(1, 0).long()
+ 
++# 官方nuScenes是0.5秒，V2X接入时改成实测帧间隔
++LIDAR_INTERVAL = 0.5
++# 长度必须覆盖类别编号，默认顺序对应官方7类
++MAX_VELO = [4, 1, 3, 5.5, 13, 3, 4]
++
+ def class_velocity_adj(boxes, classes, time_diff=0.5):
+     center_dist = torch.cdist(boxes[0][:, :2], boxes[1][:, :2], p=2.0)
+     cls_mask = torch.eq(classes[0].unsqueeze(1), classes[1].unsqueeze(0))
+     cls_mask = torch.logical_not(cls_mask).float() * 1e16
+     center_dist += cls_mask
+ 
+-    max_velo = torch.tensor([4, 1, 3, 5.5, 13, 3, 4], device=boxes[0].device)
++    max_velo = torch.tensor(MAX_VELO, device=boxes[0].device, dtype=center_dist.dtype)
+     distance_thresh = torch.gather(max_velo, 0, classes[0].long())
+     # distance_thresh *= time_diff
+ 
+@@ -74,7 +80,7 @@
+         # Move track boxes forward using their velocity
+         pred_boxes_t = deepcopy(boxes_t)
+         # TODO: update with precise time stamp
+-        pred_boxes_t[:, :2] += velo_t.detach() * age_t.unsqueeze(1) * 0.5 # s1 = s0 + v0 * delta_t
++        pred_boxes_t[:, :2] += velo_t.detach() * age_t.unsqueeze(1) * float(LIDAR_INTERVAL)
+ 
+         adj = class_velocity_adj((pred_boxes_t, boxes_d), (cls_t, cls_d))
+         edge_index = adj_to_edge_index(adj)

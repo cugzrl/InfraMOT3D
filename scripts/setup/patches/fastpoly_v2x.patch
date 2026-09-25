@@ -1,0 +1,48 @@
+diff -ruN --exclude __pycache__ --exclude COMMIT --exclude .git /tmp/mot_src/orig_poly/FastPoly-694dec303db0831cbed4f8cac3f39dc1afe397ba/motion_module/motion_model.py third_party/FastPoly/motion_module/motion_model.py
+--- a/motion_module/motion_model.py
++++ b/motion_module/motion_model.py
+@@ -179,7 +179,7 @@
+         # only for debug
+         q = Quaternion(det[8:12].tolist())
+         q = -q if q.axis[-1] < 0 else q
+-        assert q.radians == det_box.yaw
++        assert abs(float(q.radians) - float(det_box.yaw)) < 1e-5
+ 
+         return np.mat(init_state).T
+ 
+@@ -503,7 +503,7 @@
+         # only for debug
+         q = Quaternion(det[8:12].tolist())
+         q = -q if q.axis[-1] < 0 else q
+-        assert q.radians == det_box.yaw
++        assert abs(float(q.radians) - float(det_box.yaw)) < 1e-5
+ 
+         return np.mat(init_state).T
+ 
+@@ -908,7 +908,7 @@
+         # only for debug
+         q = Quaternion(det[8:12].tolist())
+         q = -q if q.axis[-1] < 0 else q
+-        assert q.radians == det_box.yaw
++        assert abs(float(q.radians) - float(det_box.yaw)) < 1e-5
+ 
+         return np.mat(init_state).T
+ 
+@@ -1068,7 +1068,7 @@
+         # only for debug
+         q = Quaternion(det[8:12].tolist())
+         q = -q if q.axis[-1] < 0 else q
+-        assert q.radians == det_box.yaw
++        assert abs(float(q.radians) - float(det_box.yaw)) < 1e-5
+ 
+         return np.mat(init_state).T
+ 
+@@ -1233,7 +1233,7 @@
+         # only for debug
+         q = Quaternion(det[8:12].tolist())
+         q = -q if q.axis[-1] < 0 else q
+-        assert q.radians == det_box.yaw
++        assert abs(float(q.radians) - float(det_box.yaw)) < 1e-5
+ 
+         return np.mat(init_state).T
+ 

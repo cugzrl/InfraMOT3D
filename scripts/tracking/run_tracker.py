@@ -85,7 +85,7 @@ def main():
         if allowed is not None and sequence_id not in allowed:
             continue
         input_type, detection_root, frames = _load_inputs(config, converted_root, entry)
-        tracker = create_tracker(config["tracker"])
+        tracker = create_tracker(config["tracker"], config["_root"])
         rows = []
         for frame in frames:
             # source_track_id只留给评估，不进入跟踪器
