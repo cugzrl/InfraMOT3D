@@ -43,6 +43,7 @@ def main():
         float(config["tracker"]["score_threshold"]),
         float(config["model"]["graph_truncation_dist"]),
     )
+    # 含空检测帧的clip不进入association loss，当前占比低于1%所以保留删除
     kept = []
     for item in dataset.meta:
         usable = True

@@ -15,6 +15,7 @@ trackers:
     kind: classic
   - name: Fast-Poly
     config: configs/trackers/fastpoly/centerpoint.yaml
+    run_config: outputs/fastpoly_centerpoint/calibration/best_config.yaml
     kind: classic
   - name: 3DMOTFormer
     config: configs/trackers/3dmotformer/centerpoint.yaml

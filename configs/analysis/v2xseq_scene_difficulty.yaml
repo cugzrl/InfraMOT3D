@@ -1,0 +1,49 @@
+project:
+  data_root: data/v2x-seq-infrastructure
+  converted_root: data/converted/v2x_seq_infrastructure
+  output_root: outputs/analysis/scene_difficulty
+
+split_file: configs/datasets/v2xseq_sequence_split.json
+detection_root: outputs/centerpoint/detections
+motformer_stats: outputs/3dmotformer_centerpoint/data_stats.json
+
+lidar_interval: 0.1
+interval_tolerance: 0.02
+
+motformer:
+  score_threshold: 0.1
+  sample_length: 6
+  calibration_sequences: ["0078", "0087", "0093", "0094"]
+  classes:
+    - Car
+    - Van
+    - Bus
+    - Truck
+    - Pedestrian
+    - Cyclist
+    - Motorcyclist
+    - Barrowlist
+
+bev:
+  x_min: 0.0
+  x_max: 100.0
+  y_min: -39.68
+  y_max: 39.68
+
+grid_sizes: [2.0, 5.0, 10.0]
+primary_grid: 5.0
+min_observations: 20
+pose_translation_tolerance_m: 0.2
+pose_rotation_l2_tolerance: 0.02
+iou_threshold: 0.25
+match_center_gate_m: 20.0
+long_window_seconds: [600, 1200]
+judgment_min_spearman: 0.4
+
+trackers:
+  - name: AB3DMOT
+    prediction_root: outputs/ab3dmot_centerpoint/predictions
+  - name: SimpleTrack
+    prediction_root: outputs/simpletrack_centerpoint/predictions
+  - name: GRAE-3DMOT
+    prediction_root: outputs/grae_centerpoint/predictions

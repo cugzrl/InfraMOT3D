@@ -29,8 +29,14 @@ def main():
     root = Path(__file__).resolve().parents[2]
     experiment = yaml.safe_load((root / args.experiment).read_text(encoding="utf-8"))
     grae_config = load_config("configs/trackers/grae/centerpoint.yaml")
-    fastpoly_config = load_config("configs/trackers/fastpoly/centerpoint.yaml")
+    fastpoly_base = load_config("configs/trackers/fastpoly/centerpoint.yaml")
+    fastpoly_best = root / "outputs/fastpoly_centerpoint/calibration/best_config.yaml"
+    fastpoly_config = load_config(fastpoly_best) if fastpoly_best.is_file() else fastpoly_base
     motformer_config = load_config("configs/trackers/3dmotformer/centerpoint.yaml")
+    empty_stats_path = root / "outputs/3dmotformer_centerpoint/data_stats.json"
+    empty_stats = read_json(empty_stats_path) if empty_stats_path.is_file() else None
+    interval_path = root / "outputs/analysis/scene_difficulty/frame_interval.json"
+    interval_stats = read_json(interval_path) if interval_path.is_file() else None
     detection_manifest = read_json(root / "outputs" / "centerpoint" / "detection_manifest.json")
     selection = read_json(Path(grae_config["project"]["output_root"]) / "ckpt" / "checkpoint_selection.json")
     motformer_selection = read_json(Path(motformer_config["project"]["output_root"]) / "ckpt" / "checkpoint_selection.json")
@@ -47,13 +53,21 @@ def main():
         "score_floor": float(grae_config["tracker"]["score_floor"]),
         "dair_v2x_commit": (root / "third_party" / "DAIR-V2X" / "COMMIT").read_text(encoding="utf-8").strip(),
         "fastpoly_commit": (root / "third_party" / "FastPoly" / "COMMIT").read_text(encoding="utf-8").strip(),
+        "fastpoly_adaptation": "velocity-free V2X-Seq adaptation",
+        "fastpoly_base_config": "configs/trackers/fastpoly/centerpoint.yaml",
+        "fastpoly_run_config": "outputs/fastpoly_centerpoint/calibration/best_config.yaml",
         "fastpoly_lidar_interval": float(fastpoly_config["tracker"]["fastpoly"]["basic"]["LiDAR_interval"]),
         "fastpoly_has_velo": False,
+        "fastpoly_velocity_note": "CenterPoint没有velocity head，推理速度只来自Fast-Poly运动模型，不是原论文结果直接复现",
+        "frame_interval": interval_stats,
         "motformer_commit": (root / "third_party" / "3DMOTFormer" / "COMMIT").read_text(encoding="utf-8").strip(),
+        "motformer_adaptation": "velocity-free detector-input V2X-Seq adaptation",
         "motformer_checkpoint": str(Path(motformer_config["project"]["output_root"]) / "ckpt" / "checkpoint-best.pth"),
         "motformer_epoch": int(motformer_selection["best_epoch"]),
         "motformer_lidar_interval": float(motformer_config["train"]["lidar_interval"]),
         "motformer_velocity_input": [0.0, 0.0],
+        "motformer_velocity_note": "检测速度输入为[0,0]，模型自己的velocity prediction正常训练和使用，不是原论文结果直接复现",
+        "motformer_empty_clip_stats": empty_stats,
         "val_sequences": len(val_ids),
         "protocol": experiment["protocol"],
         "evaluation_range": list(OFFICIAL_RANGE),

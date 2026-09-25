@@ -1,8 +1,6 @@
 # InfraMOT3D
 
-路侧单激光雷达3D多目标跟踪工程。当前正式benchmark使用同一份CenterPoint检测，在V2X-Seq验证集上比较AB3DMOT、SimpleTrack、ImmortalTracker、Fast-Poly、3DMOTFormer和GRAE-3DMOT。
-
-V2X-Seq正式评估遵循DAIR-V2X官方tracking protocol。MOTA、MOTP、AMOTA、AMOTP、IDSW与官方定义一致。IDF1、FM、FP、FN额外在相同best score threshold和相同数据范围下报告。
+路侧3D多目标跟踪：在V2X-Seq验证集上进行实验
 
 ## 目录结构
 
@@ -12,6 +10,7 @@ InfraMOT3D
 │   ├── datasets
 │   ├── detectors/centerpoint
 │   ├── trackers
+│   ├── analysis
 │   └── experiments
 ├── data
 │   ├── v2x-seq-infrastructure
@@ -20,6 +19,7 @@ InfraMOT3D
 ├── src/inframot3d
 │   ├── detection
 │   ├── tracking
+│   ├── analysis
 │   └── evaluation
 │       ├── evaluator.py
 │       ├── metrics.py
@@ -31,6 +31,7 @@ InfraMOT3D
 │   ├── tracking
 │   ├── evaluation
 │   ├── experiments
+│   ├── analysis
 │   └── visualization
 ├── tests/evaluation
 ├── third_party
@@ -42,11 +43,7 @@ InfraMOT3D
 └── outputs
 ```
 
-统一输入和预测都是现有JSONL。新增数据集时只增加Protocol、数据集配置和实验配置。
-
 ## 环境
-
-使用已有conda环境`track`。进入仓库后：
 
 ```bash
 export PYTHONPATH=$PWD/src
@@ -63,11 +60,9 @@ bash scripts/setup/setup_fastpoly.sh
 bash scripts/setup/setup_3dmotformer.sh
 ```
 
-`third_party/DAIR-V2X`只作为V2X-Seq协议的对照实现，正式benchmark不再另出一张官方结果表。
-
 ## 数据准备
 
-`data/v2x-seq-infrastructure`指向原始路侧数据。序列划分保持train 46、val 21、test 0，见`configs/datasets/v2xseq_sequence_split.json`。
+路侧数据序列划分保持train 46、val 21、test 0，见`configs/datasets/v2xseq_sequence_split.json`
 
 ```bash
 conda run -n track python scripts/data/prepare_data.py --config configs/trackers/ab3dmot/gt.yaml
@@ -76,7 +71,7 @@ conda run -n track python scripts/data/prepare_centerpoint_data.py --config conf
 
 ## CenterPoint训练
 
-检测配置是`configs/detectors/centerpoint/v2xseq.yaml`。当前权重是epoch 30，路径写在`outputs/centerpoint/detection_manifest.json`。不要在已完成的one-cycle训练上继续训练。
+检测配置`configs/detectors/centerpoint/v2xseq.yaml`
 
 ```bash
 bash scripts/detection/train_centerpoint_v2xseq.sh 2 30
@@ -87,11 +82,9 @@ conda run -n track python scripts/detection/infer_centerpoint_v2xseq.py \
   --skip-eval
 ```
 
-共享检测池是`outputs/centerpoint/detections`，导出阈值保持`score>=0.01`。跟踪器自己决定如何使用这些分数。
-
+共享检测结果`outputs/centerpoint/detections`，导出阈值保持`score>=0.01`
 ## Tracker运行
 
-AB3DMOT、SimpleTrack、ImmortalTracker读取同一份检测。类别分数只用于新建轨迹，配置在`configs/experiments/centerpoint_score_thresholds.yaml`。
 
 ```bash
 conda run -n track python scripts/tracking/run_tracker.py --config configs/trackers/ab3dmot/centerpoint.yaml --split val
@@ -99,11 +92,9 @@ conda run -n track python scripts/tracking/run_tracker.py --config configs/track
 conda run -n track python scripts/tracking/run_tracker.py --config configs/trackers/immortal/centerpoint.yaml --split val
 ```
 
-使用标注做输入时，把配置换成对应的`gt.yaml`，或直接运行`scripts/tracking/run_ab3dmot_gt.sh`。
-
 ## GRAE训练
 
-GRAE配置是`configs/trackers/grae/centerpoint.yaml`。训练检测阈值`train.score_threshold=0.1`，推理`tracker.score_floor=0.1`，低于0.1的CenterPoint检测在GRAE内部丢弃。`association_alpha=0.24`只划分官方high/low两阶段关联。类别birth阈值只负责新建轨迹。
+GRAE配置`configs/trackers/grae/centerpoint.yaml`
 
 ```bash
 conda run -n track python scripts/data/prepare_grae_v2xseq.py --config configs/trackers/grae/centerpoint.yaml --split train
@@ -112,20 +103,24 @@ conda run -n track python scripts/tracking/select_grae_checkpoint.py --config co
 conda run -n track python scripts/tracking/infer_grae_v2xseq.py --config configs/trackers/grae/centerpoint.yaml --split val
 ```
 
-当前使用的权重是`outputs/grae_centerpoint/ckpt/checkpoint-best.pth`。推理不会重新训练。
+最佳权重`outputs/grae_centerpoint/ckpt/checkpoint-best.pth`
 
 ## Fast-Poly
 
-Fast-Poly配置是`configs/trackers/fastpoly/centerpoint.yaml`。官方Kalman只接受固定`LiDAR_interval`，不能按帧传入真实dt。V2X-Seq相邻帧间隔中位数约0.0988秒，因此统一设为0.1秒。当前CenterPoint没有速度输出，`has_velo`为false，推理速度只来自Fast-Poly自己的运动模型。框从`[x,y,z,yaw,length,width,height]`显式转为官方`width,length,height`加z轴四元数。类别阈值以官方nuScenes参数为起点，只在0078、0087、0093、0094上对score、association和lifecycle做小范围坐标下降，Truck的起始score阈值是0.12。
+Fast-Poly是velocity-free V2X-Seq adaptation，不是原论文结果直接复现。CenterPoint没有velocity head，`has_velo`为false，推理速度只来自Fast-Poly自己的运动模型。官方Kalman只接受固定`LiDAR_interval`。帧间隔检查见`outputs/analysis/scene_difficulty/frame_interval.json`，中位数与0.1秒的误差不超过0.02秒，因此继续使用0.1秒。
+
+`configs/trackers/fastpoly/centerpoint.yaml`保存基础V2X适配。0078、0087、0093、0094上的坐标下降写到`outputs/fastpoly_centerpoint/calibration/best_config.yaml`和`calibration_results.json`。正式benchmark读取`best_config`。
 
 ```bash
 conda run -n track python scripts/tracking/tune_fastpoly_calibration.py
-conda run -n track python scripts/tracking/run_tracker.py --config configs/trackers/fastpoly/centerpoint.yaml --split val
+conda run -n track python scripts/tracking/run_tracker.py --config outputs/fastpoly_centerpoint/calibration/best_config.yaml --split val
 ```
 
 ## 3DMOTFormer
 
-3DMOTFormer V2X-Seq velocity-free detector-input adaptation。检测速度输入在训练和推理都是`[0,0]`，模型自己的速度预测头保留，训练目标来自GT下一帧位置除以0.1秒。检测池导出阈值是0.01，跟踪前使用`score_threshold=0.1`，与GRAE的`score_floor`相同，训练和推理都使用这个阈值。路侧传感器固定，`ego_translation`为0。框从InfraMOT3D的`[x,y,z,yaw,length,width,height]`转为官方`[x,y,z,width,length,height,yaw]`，输出时再转回。GT track_id只用于训练监督。0078、0087、0093、0094不参与梯度，只用于按IDF1选择checkpoint。
+3DMOTFormer是velocity-free detector-input V2X-Seq adaptation，不是原论文结果直接复现。检测速度输入在训练和推理都是`[0,0]`，模型自己的velocity prediction正常训练和使用。检测池导出阈值是0.01，跟踪前使用`score_threshold=0.1`，训练和推理相同。GT track_id只用于训练监督。
+
+训练clip里含空检测帧的比例低于1%，统计在`outputs/3dmotformer_centerpoint/data_stats.json`，因此继续删除这些clip。空帧比例若明显高于1%，则不能静默删除。
 
 ```bash
 conda run -n track python scripts/data/prepare_3dmotformer_v2xseq.py --config configs/trackers/3dmotformer/centerpoint.yaml
@@ -136,7 +131,7 @@ conda run -n track python scripts/tracking/infer_3dmotformer_v2xseq.py --config 
 
 ## 统一evaluation
 
-正式评估只运行`UnifiedMOTEvaluator`。`V2XSeqProtocol`把Car、Van、Bus、Truck合并为Car，范围是`[0,-39.68,-3,100,39.68,1]`，3D IoU阈值是0.25，recall工作点是41个。MOTA和MOTP使用与DAIR官方相同的best single score threshold。AMOTA和AMOTP按官方recall曲线平均。IDSW、IDF1、FM、FP、FN在同一个threshold上计算。过滤使用轨迹平均分，GRAE低分coasted track会被该threshold去掉。
+正式评估只运行`UnifiedMOTEvaluator`。`V2XSeqProtocol`把Car、Van、Bus、Truck合并为Car，范围是`[0,-39.68,-3,100,39.68,1]`，3D IoU阈值0.25，recall工作点41个
 
 ```bash
 conda run -n track python scripts/evaluation/evaluate_mot.py --config configs/trackers/ab3dmot/centerpoint.yaml --split val
@@ -148,14 +143,20 @@ conda run -n track python scripts/evaluation/evaluate_mot.py --config configs/tr
 conda run -n track python -u tests/evaluation/test_v2xseq_official_parity.py
 ```
 
-同一份预测上，MOTA、MOTP、AMOTA、AMOTP、IDSW、FP、FN、FM与DAIR官方Evaluator的误差小于1e-6。把GT当作预测时，MOTA和MOTP接近1，IDSW为0。
-
 ## 完整benchmark
 
 ```bash
 bash scripts/experiments/run_v2xseq_centerpoint.sh
 ```
 
-脚本先检查parity，再按AB3DMOT、SimpleTrack、ImmortalTracker、Fast-Poly、3DMOTFormer、GRAE-3DMOT运行统一评估，写出`outputs/benchmark/v2xseq_centerpoint.csv`与`outputs/benchmark/experiment_manifest.json`。3DMOTFormer需要先完成训练和checkpoint选择。
+六个方法使用同一个CenterPoint checkpoint、同一份`outputs/centerpoint/detections`、同一个val split、同一个`UnifiedMOTEvaluator`和`V2XSeqProtocol`
 
-BEV和Open3D可视化入口在`scripts/visualization`，Open3D说明见`docs/open3d_visualization.md`。
+## Scene Tracking Difficulty
+
+```bash
+conda run -n track python scripts/analysis/analyze_scene_difficulty.py --config configs/analysis/v2xseq_scene_difficulty.yaml
+```
+
+输出在`outputs/analysis/scene_difficulty/`。地图角色是`offline_analysis_map`。
+
+BEV和Open3D可视化入口在`scripts/visualization`，Open3D说明见`docs/open3d_visualization.md`

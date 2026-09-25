@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from inframot3d.config import load_config
 from inframot3d.evaluation import UnifiedMOTEvaluator
-from inframot3d.io import read_json, read_jsonl, write_jsonl
+from inframot3d.io import read_json, read_jsonl, write_json, write_jsonl
 from inframot3d.tracking.fastpoly_adapter import FastPolyTracker
 
 
@@ -93,16 +93,15 @@ def _score(config, multipliers, work, evaluator):
     return (float(metrics["IDF1"]), float(metrics["MOTA"])), metrics
 
 
-def _write_yaml(path, multipliers, original):
-    text = path.read_text(encoding="utf-8")
+def _render_yaml(text, multipliers, original):
+    # 只改校准副本，基础配置文件保持V2X初始适配
     for _, name in GROUPS:
         values = {int(key): float(value) * float(multipliers[name]) for key, value in original[name].items()}
         body = ", ".join("%d: %.4f" % (key, values[key]) for key in sorted(values))
-        updated, count = re.subn(r"(%s:\s*)\{[^}]*\}" % name, lambda match: match.group(1) + "{%s}" % body, text, count=1)
+        text, count = re.subn(r"(%s:\s*)\{[^}]*\}" % name, lambda match: match.group(1) + "{%s}" % body, text, count=1)
         if count != 1:
             raise SystemExit("找不到配置项%s" % name)
-        text = updated
-    path.write_text(text, encoding="utf-8")
+    return text
 
 
 def main():
@@ -117,9 +116,11 @@ def main():
         source = _lookup(fastpoly, path)
         original[name] = {int(key): float(value) for key, value in source.items()}
     evaluator = UnifiedMOTEvaluator(root)
-    work = Path(config["project"]["output_root"]) / "calibration_tune"
+    work = Path(config["project"]["output_root"]) / "calibration"
     multipliers = {name: 1.0 for _, name in GROUPS}
-    best_key, best_metrics = _score(config, multipliers, work, evaluator)
+    candidates = []
+    best_key, _ = _score(config, multipliers, work, evaluator)
+    candidates.append({**multipliers, "idf1": best_key[0], "mota": best_key[1]})
     print("baseline IDF1 %.4f MOTA %.4f" % (best_key[0], best_key[1]))
     for _, name in GROUPS:
         chosen = multipliers[name]
@@ -127,18 +128,33 @@ def main():
         for scale in (0.75, 1.25):
             trial = dict(multipliers)
             trial[name] = scale
-            key, metrics = _score(config, trial, work, evaluator)
+            key, _ = _score(config, trial, work, evaluator)
+            candidates.append({**trial, "idf1": key[0], "mota": key[1]})
             print("%s x%.2f IDF1 %.4f MOTA %.4f" % (name, scale, key[0], key[1]))
             if key > chosen_key:
                 chosen = scale
                 chosen_key = key
-                best_metrics = metrics
         multipliers[name] = chosen
         best_key = chosen_key
-    yaml_path = root / "configs/trackers/fastpoly/centerpoint.yaml"
-    _write_yaml(yaml_path, multipliers, original)
+    base_text = (root / "configs/trackers/fastpoly/centerpoint.yaml").read_text(encoding="utf-8")
+    best_path = work / "best_config.yaml"
+    best_path.parent.mkdir(parents=True, exist_ok=True)
+    best_path.write_text(_render_yaml(base_text, multipliers, original), encoding="utf-8")
+    write_json(
+        work / "calibration_results.json",
+        {
+            "calibration_sequences": SEQUENCES,
+            "search_parameters": [name for _, name in GROUPS],
+            "scales": [0.75, 1.0, 1.25],
+            "method": "coordinate_descent",
+            "candidates": candidates,
+            "final_multipliers": multipliers,
+            "idf1": best_key[0],
+            "mota": best_key[1],
+            "best_config": str(best_path),
+        },
+    )
     print("选定倍数 %s IDF1 %.4f MOTA %.4f" % (multipliers, best_key[0], best_key[1]))
-    del best_metrics
 
 
 if __name__ == "__main__":
