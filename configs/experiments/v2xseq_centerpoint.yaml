@@ -1,0 +1,18 @@
+dataset: configs/datasets/v2xseq.yaml
+detector: configs/detectors/centerpoint/v2xseq.yaml
+birth_thresholds: configs/experiments/centerpoint_score_thresholds.yaml
+protocol: v2xseq
+output: outputs/benchmark/v2xseq_centerpoint.csv
+trackers:
+  - name: AB3DMOT
+    config: configs/trackers/ab3dmot/centerpoint.yaml
+    kind: classic
+  - name: SimpleTrack
+    config: configs/trackers/simpletrack/centerpoint.yaml
+    kind: classic
+  - name: ImmortalTracker
+    config: configs/trackers/immortal/centerpoint.yaml
+    kind: classic
+  - name: GRAE-3DMOT
+    config: configs/trackers/grae/centerpoint.yaml
+    kind: grae

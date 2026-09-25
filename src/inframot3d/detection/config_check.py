@@ -23,7 +23,7 @@ def _same(left, right):
 
 def check_centerpoint_configs(root):
     root = Path(root)
-    project = _load_yaml(root / "configs/centerpoint_v2xseq.yaml")
+    project = _load_yaml(root / "configs/detectors/centerpoint/v2xseq.yaml")
     dataset_paths = [
         root / "scripts/openpcdet_overlay/tools/cfgs/dataset_configs/v2x_seq_dataset.yaml",
         root / "third_party/OpenPCDet/tools/cfgs/dataset_configs/v2x_seq_dataset.yaml",

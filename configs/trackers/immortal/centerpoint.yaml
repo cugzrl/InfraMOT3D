@@ -1,0 +1,64 @@
+project:
+  seed: 0
+  data_root: data/v2x-seq-infrastructure
+  converted_root: data/converted/v2x_seq_infrastructure
+  output_root: outputs/immortal_centerpoint
+
+split_file: configs/datasets/v2xseq_sequence_split.json
+
+input:
+  type: detection
+  detection_root: outputs/centerpoint/detections
+
+tracker:
+  name: ImmortalTracker
+  score_threshold: 0.1
+  score_thresholds_file: configs/experiments/centerpoint_score_thresholds.yaml
+  frame_dt: 0.1
+  motion:
+    p_scale: 10.0
+    velocity_p_scale: 1000.0
+    q_scale: 1.0
+    r_scale: 1.0
+    score_decay: 0.01
+  vehicle:
+    classes: [Car, Van, Bus, Truck]
+    association: bipartite
+    metric: giou
+    threshold: 1.5
+    min_hits: 1
+    max_age: null
+    max_output_age: 1
+    commit_modes: [1]
+    output_rule: recent
+  pedestrian:
+    classes: [Pedestrian]
+    association: bipartite
+    metric: giou
+    threshold: 1.5
+    min_hits: 1
+    max_age: null
+    max_output_age: 1
+    commit_modes: [1]
+    output_rule: recent
+  cyclist:
+    classes: [Cyclist, Motorcyclist, Barrowlist]
+    association: bipartite
+    metric: giou
+    threshold: 1.5
+    min_hits: 1
+    max_age: null
+    max_output_age: 1
+    commit_modes: [1]
+    output_rule: recent
+
+evaluation:
+  iou_thresholds:
+    Car: 0.5
+    Van: 0.5
+    Bus: 0.5
+    Truck: 0.5
+    Pedestrian: 0.25
+    Cyclist: 0.25
+    Motorcyclist: 0.25
+    Barrowlist: 0.25

@@ -21,7 +21,7 @@ OpenPCDet对NumPy 1.26做了小范围兼容修改：`np.int`、`np.float`、`np.
 安装：
 
 ```bash
-bash scripts/setup_openpcdet.sh
+bash scripts/setup/setup_openpcdet.sh
 ```
 
 脚本会在`third_party/OpenPCDet`不存在时克隆官方仓库，复制V2X-Seq数据集和配置，并使用与PyTorch匹配的CUDA toolkit编译CUDA扩展。

@@ -1,0 +1,15 @@
+name: v2xseq
+project:
+  data_root: data/v2x-seq-infrastructure
+  converted_root: data/converted/v2x_seq_infrastructure
+split_file: configs/datasets/v2xseq_sequence_split.json
+protocol: v2xseq
+classes:
+  - Car
+  - Van
+  - Bus
+  - Truck
+  - Pedestrian
+  - Cyclist
+  - Motorcyclist
+  - Barrowlist

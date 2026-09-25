@@ -15,8 +15,8 @@
 
 ```bash
 export PYTHONPATH=$PWD/src
-EGL_PLATFORM=surfaceless conda run -n track python scripts/visualize_open3d.py \
-  --config configs/ab3dmot_gt.yaml \
+EGL_PLATFORM=surfaceless conda run -n track python scripts/visualization/visualize_open3d.py \
+  --config configs/trackers/ab3dmot/gt.yaml \
   --sequence 0000 \
   --view roadside \
   --mode both \
@@ -26,8 +26,8 @@ EGL_PLATFORM=surfaceless conda run -n track python scripts/visualize_open3d.py \
 ## 保留原视角
 
 ```bash
-EGL_PLATFORM=surfaceless conda run -n track python scripts/visualize_open3d.py \
-  --config configs/ab3dmot_gt.yaml \
+EGL_PLATFORM=surfaceless conda run -n track python scripts/visualization/visualize_open3d.py \
+  --config configs/trackers/ab3dmot/gt.yaml \
   --sequence 0000 \
   --view classic \
   --mode both \

@@ -1,3 +1,3 @@
-from inframot3d.evaluation.mot import evaluate
+from inframot3d.evaluation.evaluator import UnifiedMOTEvaluator
 
-__all__ = ["evaluate"]
+__all__ = ["UnifiedMOTEvaluator"]

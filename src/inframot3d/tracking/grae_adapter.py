@@ -367,7 +367,7 @@ def association_metrics(model, clips, device):
 
 
 class GraeTracker:
-    def __init__(self, model, class_names, birth_thresholds, association_alpha=0.24, age=12, score_floor=0.01):
+    def __init__(self, model, class_names, birth_thresholds, association_alpha=0.24, age=12, score_floor=0.1):
         self.model = model
         self.class_names = list(class_names)
         self.birth_thresholds = {str(name): float(value) for name, value in birth_thresholds.items()}
