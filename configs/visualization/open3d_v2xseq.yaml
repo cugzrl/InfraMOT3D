@@ -1,0 +1,42 @@
+width: 1280
+height: 720
+point_size: 2.0
+voxel_size: 0.08
+fps: 10
+views:
+  classic:
+    background: [0.015, 0.02, 0.03, 1.0]
+    point_color_mode: height
+    x_range: [0.0, 125.0]
+    y_range: [-65.0, 80.0]
+    z_range: [-8.0, 8.0]
+    camera_eye: [105.0, -80.0, 58.0]
+    camera_center: [45.0, 5.0, -1.0]
+    camera_up: [0.0, 0.0, 1.0]
+    field_of_view: 52.0
+    gt_color: [0.15, 1.0, 0.25]
+    gt_line_width: 2.0
+    track_line_width: 4.0
+    image_inset:
+      enabled: false
+  roadside:
+    background: [1.0, 1.0, 1.0, 1.0]
+    point_color_mode: gray
+    point_color: [0.42, 0.44, 0.46]
+    point_size: 1.2
+    x_range: [0.0, 165.0]
+    y_range: [-40.0, 40.0]
+    z_range: [-4.0, 4.0]
+    camera_eye: [-35.0, 0.0, 52.0]
+    camera_center: [65.0, 0.0, -1.2]
+    camera_up: [0.0, 0.0, 1.0]
+    field_of_view: 50.0
+    gt_color: [0.35, 0.82, 0.56]
+    gt_line_width: 2.0
+    track_line_width: 4.0
+    image_inset:
+      enabled: true
+      width: 420
+      margin: 16
+      border_width: 3
+      draw_boxes: true

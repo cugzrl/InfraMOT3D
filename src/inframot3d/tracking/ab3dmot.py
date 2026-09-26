@@ -70,9 +70,21 @@ def _affinity(detections, tracks, metric):
     return matrix
 
 
-def _associate(detections, tracks, settings):
+def _associate(detections, tracks, settings, return_debug=False):
     if not detections or not tracks:
-        return [], list(range(len(detections))), list(range(len(tracks)))
+        result = ([], list(range(len(detections))), list(range(len(tracks))))
+        if not return_debug:
+            return result
+        threshold = float(settings["threshold"])
+        if settings["metric"] == "center_distance":
+            threshold = -threshold
+        return (*result, {
+            "metric": settings["metric"],
+            "threshold": threshold,
+            "affinity_matrix": [],
+            "gate_mask": [],
+            "candidate_pairs": [],
+        })
     matrix = _affinity(detections, tracks, settings["metric"])
     threshold = float(settings["threshold"])
     if settings["metric"] == "center_distance":
@@ -99,7 +111,16 @@ def _associate(detections, tracks, settings):
     matched_tracks = {column for _, column in matches}
     unmatched_detections = [index for index in range(len(detections)) if index not in matched_detections]
     unmatched_tracks = [index for index in range(len(tracks)) if index not in matched_tracks]
-    return matches, unmatched_detections, unmatched_tracks
+    result = (matches, unmatched_detections, unmatched_tracks)
+    if not return_debug:
+        return result
+    return (*result, {
+        "metric": settings["metric"],
+        "threshold": threshold,
+        "affinity_matrix": matrix.tolist(),
+        "gate_mask": (matrix >= threshold).tolist(),
+        "candidate_pairs": [[int(row), int(column)] for row, column in candidates],
+    })
 
 
 class ClassTracker:
@@ -108,21 +129,56 @@ class ClassTracker:
         self.tracks = []
         self.frame_count = 0
 
-    def update(self, detections, id_start):
+    def update(self, detections, id_start, debug=False):
         self.frame_count += 1
         for track in self.tracks:
             track.predict()
-        matches, unmatched_detections, _ = _associate(detections, self.tracks, self.settings)
+        pre_tracks = [
+            {
+                "track_id": int(track.track_id),
+                "box": [float(value) for value in track.box],
+                "hits": int(track.hits),
+                "time_since_update": int(track.time_since_update),
+            }
+            for track in self.tracks
+        ]
+        if debug:
+            matches, unmatched_detections, _, association_debug = _associate(
+                detections, self.tracks, self.settings, return_debug=True
+            )
+        else:
+            matches, unmatched_detections, _ = _associate(detections, self.tracks, self.settings)
         for detection_index, track_index in matches:
             self.tracks[track_index].update(detections[detection_index])
         next_id = id_start
+        created = []
         for detection_index in unmatched_detections:
+            current_id = next_id
             self.tracks.append(KalmanBox(detections[detection_index], next_id))
+            if debug:
+                created.append(
+                    {
+                        "input_index": int(detections[detection_index].get("_debug_index", detection_index)),
+                        "track_id": int(current_id),
+                    }
+                )
             next_id += 1
         outputs = []
+        track_states = []
         for track in self.tracks:
             stable = track.hits >= int(self.settings["min_hits"]) or self.frame_count <= int(self.settings["min_hits"])
             alive = track.time_since_update < int(self.settings["max_age"])
+            if debug:
+                track_states.append(
+                    {
+                        "track_id": int(track.track_id),
+                        "hits": int(track.hits),
+                        "time_since_update": int(track.time_since_update),
+                        "stable": bool(stable),
+                        "alive": bool(alive),
+                        "published": bool(stable and alive),
+                    }
+                )
             if stable and alive:
                 outputs.append(
                     {
@@ -137,7 +193,31 @@ class ClassTracker:
         self.tracks = [
             track for track in self.tracks if track.time_since_update < int(self.settings["max_age"])
         ]
-        return outputs, next_id
+        if not debug:
+            return outputs, next_id
+        snapshot = {
+            "candidate_detections": [
+                {
+                    "input_index": int(item.get("_debug_index", index)),
+                    "score": float(item.get("score", 1.0)),
+                    "box": [float(value) for value in item["box"]],
+                }
+                for index, item in enumerate(detections)
+            ],
+            "pre_tracks": pre_tracks,
+            "association": association_debug,
+            "assignments": [
+                {
+                    "input_index": int(detections[detection_index].get("_debug_index", detection_index)),
+                    "track_id": int(pre_tracks[track_index]["track_id"]),
+                }
+                for detection_index, track_index in matches
+            ],
+            "created": created,
+            "track_states": track_states,
+            "output_track_ids": [int(item["track_id"]) for item in outputs],
+        }
+        return outputs, next_id, snapshot
 
 
 class MultiClassAB3DMOT:
@@ -158,6 +238,8 @@ class MultiClassAB3DMOT:
             str(name): float(value) for name, value in (tracker_config.get("score_thresholds") or {}).items()
         }
         self.next_id = 1
+        self.debug_enabled = False
+        self.last_debug = None
 
     def _class_threshold(self, class_name):
         if class_name in self.score_thresholds:
@@ -168,12 +250,51 @@ class MultiClassAB3DMOT:
         # 统一接口保留 timestamp。AB3DMOT 的状态转移固定按一帧，不使用时间戳。
         del timestamp
         grouped = {class_name: [] for class_name in self.trackers}
-        for value in objects:
+        indexed = []
+        for index, value in enumerate(objects):
+            current = dict(value)
+            if self.debug_enabled:
+                current["_debug_index"] = int(index)
+            indexed.append(current)
+        filtered = []
+        for value in indexed:
             class_name = value["class_name"]
             if class_name in grouped and float(value.get("score", 1.0)) >= self._class_threshold(class_name):
                 grouped[class_name].append(value)
+            elif self.debug_enabled:
+                filtered.append(int(value.get("_debug_index", -1)))
         outputs = []
+        snapshots = []
         for class_name in sorted(self.trackers):
-            class_outputs, self.next_id = self.trackers[class_name].update(grouped[class_name], self.next_id)
+            if self.debug_enabled:
+                class_outputs, self.next_id, snapshot = self.trackers[class_name].update(
+                    grouped[class_name], self.next_id, debug=True
+                )
+                snapshot["class_name"] = class_name
+                snapshot["score_threshold"] = float(self._class_threshold(class_name))
+                snapshots.append(snapshot)
+            else:
+                class_outputs, self.next_id = self.trackers[class_name].update(grouped[class_name], self.next_id)
             outputs.extend(class_outputs)
-        return sorted(outputs, key=lambda value: value["track_id"])
+        ordered = sorted(outputs, key=lambda value: value["track_id"])
+        if self.debug_enabled:
+            self.last_debug = {
+                "input_detections": [
+                    {
+                        "input_index": int(index),
+                        "class_name": value["class_name"],
+                        "score": float(value.get("score", 1.0)),
+                        "box": [float(item) for item in value["box"]],
+                    }
+                    for index, value in enumerate(objects)
+                ],
+                "filtered_detection_indices": filtered,
+                "groups": snapshots,
+                "output_track_ids": [int(value["track_id"]) for value in ordered],
+            }
+        else:
+            self.last_debug = None
+        return ordered
+
+    def enable_debug(self, enabled=True):
+        self.debug_enabled = bool(enabled)

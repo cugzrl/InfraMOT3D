@@ -91,9 +91,18 @@ def _greedy_pairs(cost):
     return pairs
 
 
-def associate(detections, tracks, settings):
+def associate(detections, tracks, settings, return_debug=False):
     if not detections or not tracks:
-        return [], list(range(len(detections))), list(range(len(tracks)))
+        result = ([], list(range(len(detections))), list(range(len(tracks))))
+        if not return_debug:
+            return result
+        return (*result, {
+            "metric": settings["metric"],
+            "threshold": float(settings["threshold"]),
+            "cost_matrix": [],
+            "gate_mask": [],
+            "candidate_pairs": [],
+        })
     metric = settings["metric"]
     threshold = float(settings["threshold"])
     cost = np.empty((len(detections), len(tracks)), dtype=float)
@@ -118,7 +127,16 @@ def associate(detections, tracks, settings):
             used_columns.add(int(column))
     unmatched_detections = [index for index in range(len(detections)) if index not in used_rows]
     unmatched_tracks = [index for index in range(len(tracks)) if index not in used_columns]
-    return matches, unmatched_detections, unmatched_tracks
+    result = (matches, unmatched_detections, unmatched_tracks)
+    if not return_debug:
+        return result
+    return (*result, {
+        "metric": metric,
+        "threshold": threshold,
+        "cost_matrix": cost.tolist(),
+        "gate_mask": (cost <= threshold).tolist(),
+        "candidate_pairs": [[int(row), int(column)] for row, column in pairs],
+    })
 
 
 class MotionKalman:
@@ -292,21 +310,57 @@ class MultiClassRunner:
         if not self.trackers:
             raise ValueError("tracker 没有类别配置")
         self.next_id = 1
+        self.last_debug = None
 
-    def update(self, objects, timestamp=None):
+    def update(self, objects, timestamp=None, debug=False):
         seconds = self._seconds(timestamp)
         grouped = {class_name: [] for class_name in self.trackers}
-        for value in objects:
+        indexed = []
+        for index, value in enumerate(objects):
+            current = dict(value)
+            if debug:
+                current["_debug_index"] = int(index)
+            indexed.append(current)
+        for value in indexed:
             class_name = value["class_name"]
             if class_name in grouped:
                 grouped[class_name].append(value)
         outputs = []
+        snapshots = []
         for class_name in sorted(self.trackers):
-            class_outputs, self.next_id = self.trackers[class_name].update(
-                grouped[class_name], self.next_id, seconds
-            )
+            if debug:
+                class_outputs, self.next_id, snapshot = self.trackers[class_name].update(
+                    grouped[class_name], self.next_id, seconds, debug=True
+                )
+                snapshot["class_name"] = class_name
+                snapshots.append(snapshot)
+            else:
+                class_outputs, self.next_id = self.trackers[class_name].update(
+                    grouped[class_name], self.next_id, seconds
+                )
             outputs.extend(class_outputs)
-        return sorted(outputs, key=lambda value: value["track_id"])
+        ordered = sorted(outputs, key=lambda value: value["track_id"])
+        if debug:
+            supported = set(self.trackers)
+            self.last_debug = {
+                "input_detections": [
+                    {
+                        "input_index": int(index),
+                        "class_name": value["class_name"],
+                        "score": float(value.get("score", 1.0)),
+                        "box": [float(item) for item in value["box"]],
+                    }
+                    for index, value in enumerate(objects)
+                ],
+                "filtered_detection_indices": [
+                    int(index) for index, value in enumerate(objects) if value["class_name"] not in supported
+                ],
+                "groups": snapshots,
+                "output_track_ids": [int(value["track_id"]) for value in ordered],
+            }
+        else:
+            self.last_debug = None
+        return ordered
 
     def _seconds(self, timestamp):
         if timestamp is None:

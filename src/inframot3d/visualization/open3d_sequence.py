@@ -76,7 +76,34 @@ def _point_colors(points, settings):
     return _height_colors(points, settings["z_range"])
 
 
-def _load_point_cloud(path, settings):
+def _points_in_box(points, box):
+    # 平移到 box 中心后按 -yaw 逆旋转，再判断是否落在长宽高范围内
+    x, y, z, yaw, length, width, height = [float(value) for value in box]
+    shifted = points - np.asarray([x, y, z], dtype=float)
+    cosine, sine = np.cos(yaw), np.sin(yaw)
+    local_x = cosine * shifted[:, 0] + sine * shifted[:, 1]
+    local_y = -sine * shifted[:, 0] + cosine * shifted[:, 1]
+    local_z = shifted[:, 2]
+    return (
+        (np.abs(local_x) <= length / 2.0)
+        & (np.abs(local_y) <= width / 2.0)
+        & (np.abs(local_z) <= height / 2.0)
+    )
+
+
+def _color_tracked_points(points, colors, objects, palette):
+    # 先出现的 track 占住重叠点，避免同一点被后续框反复改色
+    claimed = np.zeros(len(points), dtype=bool)
+    for value in objects:
+        inside = _points_in_box(points, value["box"]) & ~claimed
+        if not inside.any():
+            continue
+        colors[inside] = _track_color(value["track_id"], palette)
+        claimed[inside] = True
+    return colors
+
+
+def _load_points(path, settings):
     source = o3d.io.read_point_cloud(str(path))
     points = np.asarray(source.points)
     if not len(points):
@@ -86,11 +113,19 @@ def _load_point_cloud(path, settings):
     mask &= (points[:, 1] >= settings["y_range"][0]) & (points[:, 1] <= settings["y_range"][1])
     mask &= (points[:, 2] >= settings["z_range"][0]) & (points[:, 2] <= settings["z_range"][1])
     points = points[mask]
+    voxel_size = float(settings.get("voxel_size", 0.0))
+    if voxel_size <= 0.0:
+        return points
     cloud = o3d.geometry.PointCloud()
     cloud.points = o3d.utility.Vector3dVector(points)
-    cloud.colors = o3d.utility.Vector3dVector(_point_colors(points, settings))
-    voxel_size = float(settings.get("voxel_size", 0.0))
-    return cloud.voxel_down_sample(voxel_size) if voxel_size > 0.0 else cloud
+    return np.asarray(cloud.voxel_down_sample(voxel_size).points)
+
+
+def _cloud_from_points(points, colors):
+    cloud = o3d.geometry.PointCloud()
+    cloud.points = o3d.utility.Vector3dVector(points)
+    cloud.colors = o3d.utility.Vector3dVector(colors)
+    return cloud
 
 
 def _box_corners(box):
@@ -185,7 +220,7 @@ def _draw_image_boxes(image, objects, intrinsic, extrinsic, color_fn, show_ids, 
             visible = projected[valid]
             anchor_x = float(np.clip(visible[:, 0].min(), 0, image.width - 90))
             anchor_y = float(np.clip(visible[:, 1].min() - 17, 0, image.height - 18))
-            label = f"{value['class_name']} #{value['track_id']}"
+            label = f"{value['class_name']} {value['track_id']}"
             bounds = draw.textbbox((anchor_x, anchor_y), label, font=label_font)
             draw.rounded_rectangle(
                 (bounds[0] - 3, bounds[1] - 2, bounds[2] + 3, bounds[3] + 2),
@@ -210,6 +245,25 @@ def _add_classic_overlay(image, frame, gt_count, track_count, mode):
     return image
 
 
+def _add_method_label(canvas, method_name):
+    if not method_name:
+        return
+    draw = ImageDraw.Draw(canvas, "RGBA")
+    text_font = _font(22)
+    margin = 24
+    bounds = draw.textbbox((0, 0), method_name, font=text_font)
+    text_width = bounds[2] - bounds[0]
+    text_height = bounds[3] - bounds[1]
+    left = canvas.width - margin - text_width
+    top = margin
+    draw.rounded_rectangle(
+        (left - 12, top - 8, left + text_width + 12, top + text_height + 10),
+        radius=8,
+        fill=(255, 255, 255, 220),
+    )
+    draw.text((left, top), method_name, font=text_font, fill=(32, 36, 42, 255))
+
+
 def _add_roadside_overlay(
     image,
     frame,
@@ -219,6 +273,7 @@ def _add_roadside_overlay(
     data_root,
     metadata,
     settings,
+    method_name="",
 ):
     canvas = Image.fromarray(np.asarray(image)).convert("RGB")
     draw = ImageDraw.Draw(canvas, "RGBA")
@@ -227,6 +282,7 @@ def _add_roadside_overlay(
     bounds = draw.textbbox((24, canvas.height - 42), info, font=text_font)
     draw.rounded_rectangle((16, canvas.height - 52, bounds[2] + 34, canvas.height - 14), radius=8, fill=(255, 255, 255, 220))
     draw.text((24, canvas.height - 42), info, font=text_font, fill=(35, 42, 52, 255))
+    _add_method_label(canvas, method_name)
     inset_settings = settings["image_inset"]
     if not inset_settings.get("enabled", False):
         return canvas
@@ -307,6 +363,7 @@ def render_open3d_sequence(
     max_frames=None,
     make_video=False,
     make_gif=False,
+    method_name="",
 ):
     if mode not in {"gt", "track", "both"}:
         raise ValueError(f"不支持的显示模式{mode}")
@@ -333,6 +390,9 @@ def render_open3d_sequence(
     width, height = int(settings["width"]), int(settings["height"])
     renderer = o3d.visualization.rendering.OffscreenRenderer(width, height)
     renderer.scene.set_background(np.asarray(settings["background"], dtype=np.float32))
+    if view == "roadside":
+        # 关闭色调映射，否则纯白背景会被压成浅灰
+        renderer.scene.view.set_post_processing(False)
     cloud_material = _material("defaultUnlit", point_size=settings["point_size"])
     gt_material = _material("unlitLine", line_width=settings["gt_line_width"])
     track_material = _material("unlitLine", line_width=settings["track_line_width"])
@@ -344,7 +404,11 @@ def render_open3d_sequence(
         if gt_frame["frame_id"] != track_frame["frame_id"]:
             raise ValueError(f"序列{sequence_id}第{index}帧编号不一致")
         renderer.scene.clear_geometry()
-        cloud = _load_point_cloud(data_root / gt_frame["pointcloud_path"], settings)
+        points = _load_points(data_root / gt_frame["pointcloud_path"], settings)
+        colors = _point_colors(points, settings)
+        if view == "roadside" and mode in {"track", "both"} and track_frame["objects"]:
+            colors = _color_tracked_points(points, colors, track_frame["objects"], palette)
+        cloud = _cloud_from_points(points, colors)
         renderer.scene.add_geometry("pointcloud", cloud, cloud_material)
         if mode in {"gt", "both"}:
             gt_lines = _box_lines(gt_frame["objects"], lambda _: settings["gt_color"])
@@ -375,6 +439,7 @@ def render_open3d_sequence(
                 data_root,
                 metadata,
                 settings,
+                method_name,
             )
         else:
             image = _add_classic_overlay(

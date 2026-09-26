@@ -376,7 +376,38 @@ class GraeTracker:
         self.age = int(age)
         self.score_floor = float(score_floor)
         self.device = next(model.parameters()).device
+        self.debug_enabled = False
+        self.last_debug = None
         self.reset()
+
+    def enable_debug(self, enabled=True):
+        self.debug_enabled = bool(enabled)
+
+    def _debug_instances(self, instance, detections=False):
+        if instance is None or len(instance) == 0:
+            return []
+        output = []
+        for index in range(len(instance)):
+            item = {
+                "box": [
+                    float(instance.translation[index, 0].detach().cpu()),
+                    float(instance.translation[index, 1].detach().cpu()),
+                    float(instance.translation[index, 2].detach().cpu()),
+                    float(instance.yaw[index].detach().cpu()),
+                    float(instance.size[index, 0].detach().cpu()),
+                    float(instance.size[index, 1].detach().cpu()),
+                    float(instance.size[index, 2].detach().cpu()),
+                ],
+                "score": float(instance.score[index].detach().cpu()),
+                "class_index": int(instance.classes[index].detach().cpu()),
+            }
+            if detections and instance.has("debug_index"):
+                item["input_index"] = int(instance.debug_index[index].detach().cpu())
+            if not detections and instance.has("instance_inds"):
+                item["track_id"] = int(instance.instance_inds[index].detach().cpu())
+                item["age"] = int(instance.age[index].detach().cpu())
+            output.append(item)
+        return output
 
     def _association_high_mask(self, instance):
         # score>=association_alpha进入一阶段关联
@@ -401,6 +432,7 @@ class GraeTracker:
         self.track = None
         self.next_id = 0
         self.last_time = None
+        self.last_debug = None
 
     def _objects(self, instance, score_scale=1.0):
         outputs = []
@@ -436,12 +468,17 @@ class GraeTracker:
 
     def _update(self, objects, timestamp_seconds, sample_token, Instances, lap):
         # 只接收类别分数和框，低分二阶段仍保留
+        raw_objects = list(objects)
         cleaned = []
-        for item in objects:
+        cleaned_indices = []
+        filtered_indices = []
+        for input_index, item in enumerate(raw_objects):
             score = float(item.get("score", 1.0))
-            if score < self.score_floor:
+            if score < self.score_floor or item["class_name"] not in self.class_names:
+                filtered_indices.append(int(input_index))
                 continue
             cleaned.append({"class_name": item["class_name"], "score": score, "box": item["box"]})
+            cleaned_indices.append(int(input_index))
         objects = cleaned
         frame = detection_records(objects, {name: index for index, name in enumerate(self.class_names)}, timestamp_seconds)
         frame["sample_token"] = sample_token
@@ -451,16 +488,75 @@ class GraeTracker:
         dt = float(timestamp_seconds) - self.last_time
         self.last_time = float(timestamp_seconds)
         if len(frame["score"]) == 0:
+            pre_tracks = self._debug_instances(self.track) if self.debug_enabled else []
             if self.track is not None and len(self.track):
                 self.track.velocity = torch.zeros_like(self.track.velocity)
                 self.track = self.track[self.track.age[:, 0] < self.age]
                 self.track.age = self.track.age + 1
+            if self.debug_enabled:
+                self.last_debug = {
+                    "input_detections": [
+                        {
+                            "input_index": int(index),
+                            "class_name": item["class_name"],
+                            "score": float(item.get("score", 1.0)),
+                            "box": [float(value) for value in item["box"]],
+                        }
+                        for index, item in enumerate(raw_objects)
+                    ],
+                    "filtered_detection_indices": filtered_indices,
+                    "groups": [{
+                        "class_name": "all",
+                        "candidate_detections": [],
+                        "pre_tracks": pre_tracks,
+                        "association": {"affinity_matrix": [], "cost_matrix": [], "gate_mask": []},
+                        "assignments": [],
+                        "created": [],
+                        "birth_suppressed_indices": [],
+                        "track_states": self._debug_instances(self.track),
+                        "output_track_ids": [],
+                    }],
+                    "output_track_ids": [],
+                }
             return outputs
         dets = _to_instance(frame, self.device)
+        dets.set("debug_index", torch.as_tensor(cleaned_indices, dtype=torch.int64, device=self.device))
         dets.velocity = torch.zeros_like(dets.velocity)
         if self.track is None or len(self.track) == 0:
-            dets = dets[self._birth_mask(dets)]
+            candidates = self._debug_instances(dets, detections=True) if self.debug_enabled else []
+            birth_mask = self._birth_mask(dets)
+            suppressed = [
+                int(dets.debug_index[index].detach().cpu())
+                for index in range(len(dets))
+                if not bool(birth_mask[index].detach().cpu())
+            ]
+            dets = dets[birth_mask]
             if len(dets) == 0:
+                if self.debug_enabled:
+                    self.last_debug = {
+                        "input_detections": [
+                            {
+                                "input_index": int(index),
+                                "class_name": item["class_name"],
+                                "score": float(item.get("score", 1.0)),
+                                "box": [float(value) for value in item["box"]],
+                            }
+                            for index, item in enumerate(raw_objects)
+                        ],
+                        "filtered_detection_indices": filtered_indices,
+                        "groups": [{
+                            "class_name": "all",
+                            "candidate_detections": candidates,
+                            "pre_tracks": [],
+                            "association": {"affinity_matrix": [], "cost_matrix": [], "gate_mask": []},
+                            "assignments": [],
+                            "created": [],
+                            "birth_suppressed_indices": suppressed,
+                            "track_states": [],
+                            "output_track_ids": [],
+                        }],
+                        "output_track_ids": [],
+                    }
                 return outputs
             dets.velocity = torch.zeros_like(dets.velocity)
             dets.instance_inds = torch.arange(self.next_id, self.next_id + len(dets), device=self.device).view(-1, 1)
@@ -468,10 +564,45 @@ class GraeTracker:
             dets = _init_features(self.model, dets)
             self.track = copy.deepcopy(dets)
             self.track.age = self.track.age + 1
-            return self._objects(dets)
+            outputs = self._objects(dets)
+            if self.debug_enabled:
+                created = [
+                    {
+                        "input_index": int(dets.debug_index[index].detach().cpu()),
+                        "track_id": int(dets.instance_inds[index].detach().cpu()),
+                    }
+                    for index in range(len(dets))
+                ]
+                self.last_debug = {
+                    "input_detections": [
+                        {
+                            "input_index": int(index),
+                            "class_name": item["class_name"],
+                            "score": float(item.get("score", 1.0)),
+                            "box": [float(value) for value in item["box"]],
+                        }
+                        for index, item in enumerate(raw_objects)
+                    ],
+                    "filtered_detection_indices": filtered_indices,
+                    "groups": [{
+                        "class_name": "all",
+                        "candidate_detections": candidates,
+                        "pre_tracks": [],
+                        "association": {"affinity_matrix": [], "cost_matrix": [], "gate_mask": []},
+                        "assignments": [],
+                        "created": created,
+                        "birth_suppressed_indices": suppressed,
+                        "track_states": self._debug_instances(self.track),
+                        "output_track_ids": [int(item["track_id"]) for item in outputs],
+                    }],
+                    "output_track_ids": [int(item["track_id"]) for item in outputs],
+                }
+            return outputs
         self.track.velocity = torch.zeros_like(self.track.velocity)
         self.track.ct = self.track.ct + self.track.velocity[:, :2] * dt
         self.track.translation[:, :2] = self.track.ct
+        pre_tracks = self._debug_instances(self.track) if self.debug_enabled else []
+        candidate_detections = self._debug_instances(dets, detections=True) if self.debug_enabled else []
         coordinate, spatial, spatial_dist = spatial_inputs(dets, self.model.num_classes)
         current_time = dets.time[0, 0]
         temporal_info = temporal_vector(dets, current_time)[:, None, :] - temporal_vector(self.track, current_time)[None, ...]
@@ -494,6 +625,17 @@ class GraeTracker:
         cost = affinity * 0.5 + torch.exp(-distance) * 0.5
         cost = cost + -1e6 * invalid
         high_mask = self._association_high_mask(dets)
+        if self.debug_enabled:
+            gate_threshold = torch.where(
+                high_mask.view(-1, 1),
+                torch.full_like(cost, 0.1),
+                torch.full_like(cost, 0.2),
+            )
+            gate_mask = (~invalid) & (cost >= gate_threshold)
+            assignments = []
+        else:
+            gate_mask = None
+            assignments = None
         high = dets[high_mask]
         low = dets[~high_mask]
         high_cost = cost[high_mask]
@@ -508,6 +650,15 @@ class GraeTracker:
             det_ids = high.instance_inds.clone()
             for track_index, det_index in enumerate(columns):
                 if det_index >= 0:
+                    if self.debug_enabled:
+                        assignments.append(
+                            {
+                                "input_index": int(high.debug_index[det_index].detach().cpu()),
+                                "track_id": int(track_ids[track_index].detach().cpu()),
+                                "stage": "high",
+                                "cost": float(high_cost[det_index, track_index].detach().cpu()),
+                            }
+                        )
                     det_ids[det_index] = track_ids[track_index]
                     confidence = high_cost[det_index, track_index]
                     high.motion_feature[det_index] = self.track.motion_feature[track_index] * (1 - confidence) + high.motion_feature[det_index] * confidence
@@ -522,6 +673,15 @@ class GraeTracker:
             det_ids = low.instance_inds.clone()
             for track_index, det_index in enumerate(columns):
                 if det_index >= 0:
+                    if self.debug_enabled:
+                        assignments.append(
+                            {
+                                "input_index": int(low.debug_index[det_index].detach().cpu()),
+                                "track_id": int(track_ids[track_index].detach().cpu()),
+                                "stage": "low",
+                                "cost": float(low_cost[det_index, track_index].detach().cpu()),
+                            }
+                        )
                     det_ids[det_index] = track_ids[track_index]
                     confidence = low_cost[det_index, track_index]
                     low.motion_feature[det_index] = self.track.motion_feature[track_index] * (1 - confidence) + low.motion_feature[det_index] * confidence
@@ -536,9 +696,24 @@ class GraeTracker:
             dets = low
         matched = dets[dets.instance_inds[:, 0] > -1]
         fresh = dets[dets.instance_inds[:, 0] < 0]
-        fresh = fresh[self._birth_mask(fresh)]
+        birth_mask = self._birth_mask(fresh)
+        birth_suppressed = [
+            int(fresh.debug_index[index].detach().cpu())
+            for index in range(len(fresh))
+            if not bool(birth_mask[index].detach().cpu())
+        ]
+        fresh = fresh[birth_mask]
+        created = []
         if len(fresh):
             fresh.instance_inds = torch.arange(self.next_id, self.next_id + len(fresh), device=self.device).view(-1, 1)
+            if self.debug_enabled:
+                created = [
+                    {
+                        "input_index": int(fresh.debug_index[index].detach().cpu()),
+                        "track_id": int(fresh.instance_inds[index].detach().cpu()),
+                    }
+                    for index in range(len(fresh))
+                ]
             self.next_id += len(fresh)
         if len(matched) and len(fresh):
             dets = Instances.cat([matched, fresh], matched._img_meta)
@@ -561,6 +736,45 @@ class GraeTracker:
             self.track.age = self.track.age + 1
         if len(dets):
             outputs.extend(self._objects(dets))
+        if self.debug_enabled:
+            output_ids = [int(item["track_id"]) for item in outputs]
+            track_states = self._debug_instances(self.track)
+            for item in track_states:
+                item["published"] = int(item["track_id"]) in output_ids
+            self.last_debug = {
+                "input_detections": [
+                    {
+                        "input_index": int(index),
+                        "class_name": item["class_name"],
+                        "score": float(item.get("score", 1.0)),
+                        "box": [float(value) for value in item["box"]],
+                    }
+                    for index, item in enumerate(raw_objects)
+                ],
+                "filtered_detection_indices": filtered_indices,
+                "groups": [{
+                    "class_name": "all",
+                    "candidate_detections": candidate_detections,
+                    "pre_tracks": pre_tracks,
+                    "association": {
+                        "affinity_matrix": affinity.detach().cpu().tolist(),
+                        "distance_matrix": distance.detach().cpu().tolist(),
+                        "cost_matrix": cost.detach().cpu().tolist(),
+                        "gate_mask": gate_mask.detach().cpu().tolist(),
+                        "high_detection_indices": [
+                            int(dets_index)
+                            for dets_index, value in enumerate(high_mask.detach().cpu().tolist())
+                            if value
+                        ],
+                    },
+                    "assignments": assignments,
+                    "created": created,
+                    "birth_suppressed_indices": birth_suppressed,
+                    "track_states": track_states,
+                    "output_track_ids": output_ids,
+                }],
+                "output_track_ids": output_ids,
+            }
         return outputs
 
 

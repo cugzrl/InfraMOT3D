@@ -80,18 +80,33 @@ class SimpleClassTracker:
             "expired_after_extension": 0,
         }
 
-    def update(self, detections, id_start, timestamp_seconds):
+    def update(self, detections, id_start, timestamp_seconds, debug=False):
         self.frame_count += 1
         for track in self.tracks:
             track.predict(timestamp_seconds)
+        pre_tracks = [
+            {
+                "track_id": int(track.track_id),
+                "box": [float(value) for value in track.box],
+                "state": track.life.state,
+                "hits": int(track.life.hits),
+                "time_since_update": int(track.life.time_since_update),
+            }
+            for track in self.tracks
+        ]
         confident = [
             detection
             for detection in detections
             if float(detection.get("score", 1.0)) >= self.score_threshold
         ]
-        matches, unmatched_detections, unmatched_tracks = associate(
-            confident, self.tracks, self.settings
-        )
+        if debug:
+            matches, unmatched_detections, unmatched_tracks, association_debug = associate(
+                confident, self.tracks, self.settings, return_debug=True
+            )
+        else:
+            matches, unmatched_detections, unmatched_tracks = associate(
+                confident, self.tracks, self.settings
+            )
         matched = {track_index for _, track_index in matches}
         for detection_index, track_index in matches:
             track = self.tracks[track_index]
@@ -101,11 +116,14 @@ class SimpleClassTracker:
             track.update(
                 self.frame_count, 1, confident[detection_index]
             )
+        redundancy = []
         for track_index in unmatched_tracks:
             if track_index in matched:
                 continue
             track = self.tracks[track_index]
             mode = self.redundancy.resolve(track, detections)
+            if debug:
+                redundancy.append({"track_id": int(track.track_id), "mode": int(mode)})
             if mode != 0:
                 track.update(self.frame_count, mode)
                 continue
@@ -122,7 +140,9 @@ class SimpleClassTracker:
                     self.pending_recovery.add(track.track_id)
             track.update(self.frame_count, mode, max_age=max_age)
         next_id = id_start
+        created = []
         for detection_index in unmatched_detections:
+            current_id = next_id
             self.tracks.append(
                 MotionTrack(
                     confident[detection_index],
@@ -132,14 +152,62 @@ class SimpleClassTracker:
                     self.settings,
                 )
             )
+            if debug:
+                created.append(
+                    {
+                        "input_index": int(confident[detection_index].get("_debug_index", detection_index)),
+                        "track_id": int(current_id),
+                    }
+                )
             next_id += 1
         dead_ids = {track.track_id for track in self.tracks if track.life.state == "dead"}
         expired = dead_ids & self.pending_recovery
         self.stats["expired_after_extension"] += len(expired)
         self.pending_recovery.difference_update(dead_ids)
+        track_states = [
+            {
+                "track_id": int(track.track_id),
+                "state": track.life.state,
+                "recent_state": int(track.life.recent_state),
+                "time_since_update": int(track.life.time_since_update),
+                "published": bool(track.publish()),
+            }
+            for track in self.tracks
+        ]
         self.tracks = [track for track in self.tracks if track.life.state != "dead"]
         outputs = [track.export() for track in self.tracks if track.publish()]
-        return outputs, next_id
+        if not debug:
+            return outputs, next_id
+        snapshot = {
+            "score_threshold": float(self.score_threshold),
+            "filtered_detection_indices": [
+                int(item.get("_debug_index", index))
+                for index, item in enumerate(detections)
+                if float(item.get("score", 1.0)) < self.score_threshold
+            ],
+            "candidate_detections": [
+                {
+                    "input_index": int(item.get("_debug_index", index)),
+                    "score": float(item.get("score", 1.0)),
+                    "box": [float(value) for value in item["box"]],
+                }
+                for index, item in enumerate(confident)
+            ],
+            "pre_tracks": pre_tracks,
+            "association": association_debug,
+            "assignments": [
+                {
+                    "input_index": int(confident[detection_index].get("_debug_index", detection_index)),
+                    "track_id": int(pre_tracks[track_index]["track_id"]),
+                }
+                for detection_index, track_index in matches
+            ],
+            "redundancy": redundancy,
+            "created": created,
+            "track_states": track_states,
+            "output_track_ids": [int(item["track_id"]) for item in outputs],
+        }
+        return outputs, next_id, snapshot
 
     def memory_stats(self):
         output = dict(self.stats)
@@ -151,9 +219,17 @@ class SimpleClassTracker:
 class MultiClassSimpleTrack:
     def __init__(self, tracker_config):
         self.runner = MultiClassRunner(tracker_config, SimpleClassTracker)
+        self.debug_enabled = False
 
     def update(self, objects, timestamp=None):
-        return self.runner.update(objects, timestamp)
+        return self.runner.update(objects, timestamp, debug=self.debug_enabled)
+
+    def enable_debug(self, enabled=True):
+        self.debug_enabled = bool(enabled)
+
+    @property
+    def last_debug(self):
+        return self.runner.last_debug
 
     def memory_stats(self):
         totals = {
