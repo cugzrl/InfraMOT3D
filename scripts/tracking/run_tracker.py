@@ -67,12 +67,15 @@ def main():
     parser.add_argument("--config", default="configs/trackers/ab3dmot/gt.yaml")
     parser.add_argument("--sequences", nargs="*")
     parser.add_argument("--split", choices=["train", "val", "test"])
+    parser.add_argument("--prediction-root")
     args = parser.parse_args()
     config = load_config(args.config)
     _apply_score_thresholds(config)
     converted_root = Path(config["project"]["converted_root"])
     output_root = Path(config["project"]["output_root"])
-    prediction_root = output_root / "predictions"
+    prediction_root = Path(args.prediction_root) if args.prediction_root else output_root / "predictions"
+    if not prediction_root.is_absolute():
+        prediction_root = config["_root"] / prediction_root
     manifest = read_json(converted_root / "manifest.json")
     allowed = _allowed_sequences(config, args.sequences, args.split)
     input_type = (config.get("input") or {}).get("type", "ground_truth")
@@ -118,7 +121,10 @@ def main():
     }
     if detection_root is not None:
         runtime["detection_root"] = str(detection_root)
-    write_json(output_root / "runtime.json", runtime)
+    runtime_path = output_root / "runtime.json"
+    if args.prediction_root:
+        runtime_path = prediction_root.parent / ("runtime_%s.json" % config["tracker"]["name"].lower().replace("-", ""))
+    write_json(runtime_path, runtime)
     print(f"跟踪完成 帧{total_frames} 用时{elapsed:.2f}秒 FPS{runtime['fps']:.2f}")
 
 
