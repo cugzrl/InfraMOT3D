@@ -1,0 +1,39 @@
+project:
+  data_root: data/v2x-seq-infrastructure
+  converted_root: data/converted/v2x_seq_infrastructure
+  output_root: outputs/analysis/scene_survival
+
+split_file: configs/datasets/v2xseq_sequence_split.json
+detection_root: outputs/centerpoint/detections
+tracker_config: configs/trackers/simpletrack/centerpoint.yaml
+baseline_prediction_root: outputs/simpletrack_centerpoint/predictions
+baseline_metrics: outputs/simpletrack_centerpoint/evaluation/metrics.json
+
+bev:
+  x_min: 0.0
+  x_max: 100.0
+  y_min: -39.68
+  y_max: 39.68
+
+grid_m: 5.0
+min_observations:
+  "5": 20
+prior_strength: 20.0
+hard_fraction: 0.2
+delta_ages: [1, 2, 3, 5]
+detail_delta: 3
+seed: 0
+prediction_workers: 4
+prediction_split: val
+figure_scene: yizhuang09_lidar151
+figure_sequence: "0059"
+
+pose_translation_tolerance_m: 0.2
+pose_rotation_l2_tolerance: 0.02
+iou_threshold: 0.25
+match_center_gate_m: 20.0
+
+history_tracker: SimpleTrack
+trackers:
+  - name: SimpleTrack
+    prediction_root: outputs/simpletrack_centerpoint/predictions

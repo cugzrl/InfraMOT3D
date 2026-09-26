@@ -46,7 +46,7 @@ def _stage(dair_v2x, exported, name):
     return stage_root
 
 
-def run_official_metrics(root, exported, name="unified"):
+def run_official_metrics(root, exported, name="unified", score_threshold=None):
     dair_v2x, official_eval, Mail = _prepare_import(root)
     stage_root = _stage(dair_v2x, exported, name)
     previous = Path.cwd()
@@ -67,19 +67,26 @@ def run_official_metrics(root, exported, name="unified"):
         if not evaluation.loadGroundtruth():
             raise RuntimeError("官方真值读取失败")
         evaluation.compute3rdPartyMetrics()
-        best_mota, best_threshold = 0, -10000
-        thresholds, recalls = evaluation.getThresholds(evaluation.scores, evaluation.num_gt)
-        mota_sum = 0.0
-        motp_sum = 0.0
-        sample_count = official_eval.num_sample_pts - 1
-        for threshold, recall in zip(thresholds, recalls):
-            evaluation.reset()
-            evaluation.compute3rdPartyMetrics(threshold, recall)
-            mota_sum += float(evaluation.MOTA)
-            motp_sum += float(evaluation.MOTP)
-            if evaluation.MOTA > best_mota:
-                best_mota = evaluation.MOTA
-                best_threshold = threshold
+        if score_threshold is None:
+            best_mota, best_threshold = 0, -10000
+            thresholds, recalls = evaluation.getThresholds(evaluation.scores, evaluation.num_gt)
+            mota_sum = 0.0
+            motp_sum = 0.0
+            sample_count = official_eval.num_sample_pts - 1
+            for threshold, recall in zip(thresholds, recalls):
+                evaluation.reset()
+                evaluation.compute3rdPartyMetrics(threshold, recall)
+                mota_sum += float(evaluation.MOTA)
+                motp_sum += float(evaluation.MOTP)
+                if evaluation.MOTA > best_mota:
+                    best_mota = evaluation.MOTA
+                    best_threshold = threshold
+            amota = mota_sum / sample_count
+            amotp = motp_sum / sample_count
+        else:
+            best_threshold = float(score_threshold)
+            amota = float("nan")
+            amotp = float("nan")
         evaluation.reset()
         evaluation.compute3rdPartyMetrics(best_threshold)
         idf1 = identity_f1(
@@ -91,8 +98,8 @@ def run_official_metrics(root, exported, name="unified"):
         return {
             "MOTA": float(evaluation.MOTA),
             "MOTP": float(evaluation.MOTP),
-            "AMOTA": mota_sum / sample_count,
-            "AMOTP": motp_sum / sample_count,
+            "AMOTA": amota,
+            "AMOTP": amotp,
             "IDSW": int(evaluation.id_switches),
             "IDF1": float(idf1),
             "FM": int(evaluation.fragments),

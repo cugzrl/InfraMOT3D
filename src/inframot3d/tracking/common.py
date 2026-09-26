@@ -188,7 +188,7 @@ class HitManager:
         self.age += 1
         self.time_since_update += 1
 
-    def update(self, mode, frame_index):
+    def update(self, mode, frame_index, max_age=None):
         self.recent_state = int(mode)
         if int(mode) != 0:
             self.time_since_update = 0
@@ -196,13 +196,14 @@ class HitManager:
         if self.state == "birth":
             if self.hits >= self.min_hits or frame_index <= self.min_hits:
                 self.state = "alive"
-            elif self._expired():
+            elif self._expired(max_age):
                 self.state = "dead"
-        elif self.state == "alive" and self._expired():
+        elif self.state == "alive" and self._expired(max_age):
             self.state = "dead"
 
-    def _expired(self):
-        return self.max_age is not None and self.time_since_update >= self.max_age
+    def _expired(self, max_age=None):
+        effective = self.max_age if max_age is None else int(max_age)
+        return effective is not None and self.time_since_update >= effective
 
 
 class MotionTrack:
@@ -226,7 +227,7 @@ class MotionTrack:
         self.score *= self.score_decay
         return self.box
 
-    def update(self, frame_index, mode, detection=None):
+    def update(self, frame_index, mode, detection=None, max_age=None):
         if int(mode) in self.commit_modes:
             if int(mode) == 1:
                 measurement = detection["box"]
@@ -238,7 +239,7 @@ class MotionTrack:
             self.box = self.motion.commit(measurement)
         else:
             self.source_track_id = None
-        self.life.update(mode, frame_index)
+        self.life.update(mode, frame_index, max_age=max_age)
 
     def publish(self):
         if self.life.state == "dead":
@@ -279,12 +280,14 @@ class MultiClassRunner:
         }
         self.synthetic_time = 0.0
         self.time_origin = None
+        scene_memory = tracker_config.get("scene_memory")
         self.trackers = {}
         for _, group in class_groups(tracker_config):
             for class_name in group["classes"]:
                 settings = dict(group)
                 settings["score_threshold"] = float(self.score_thresholds.get(class_name, self.score_threshold))
                 settings["motion"] = motion
+                settings["scene_memory"] = scene_memory
                 self.trackers[class_name] = builder(settings)
         if not self.trackers:
             raise ValueError("tracker 没有类别配置")

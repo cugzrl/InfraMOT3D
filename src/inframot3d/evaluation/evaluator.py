@@ -10,7 +10,7 @@ class UnifiedMOTEvaluator:
         self.root = Path(root)
         self.protocol = build_protocol(protocol_name, self.root)
 
-    def evaluate(self, config, prediction_root, output_dir, split="val", sequences=None):
+    def evaluate(self, config, prediction_root, output_dir, split="val", sequences=None, score_threshold=None):
         if sequences is None:
             split_ids = read_json(self.root / config["split_file"])[split]
         else:
@@ -24,7 +24,12 @@ class UnifiedMOTEvaluator:
             split_ids,
             kitti_dir,
         )
-        raw = run_official_metrics(self.root, kitti_dir, name=output_dir.name)
+        raw = run_official_metrics(
+            self.root,
+            kitti_dir,
+            name=output_dir.name,
+            score_threshold=score_threshold,
+        )
         metrics = self.protocol.aggregate_metrics(raw)
         metrics["sequences"] = int(count)
         write_json(output_dir / "metrics.json", metrics)
