@@ -97,15 +97,19 @@ class SimpleClassTracker:
                 "track_id": int(track.track_id),
                 "box": [float(value) for value in track.box],
                 "state": track.life.state,
+                "age": int(track.life.age),
                 "hits": int(track.life.hits),
                 "time_since_update": int(track.life.time_since_update),
+                "recent_state": int(track.life.recent_state),
+                "velocity": [float(value) for value in track.motion.kf.x[7:10, 0]],
             }
             for track in self.tracks
         ]
         confident = [
             detection
             for detection in detections
-            if float(detection.get("score", 1.0)) >= self.score_gate.threshold(detection["box"], self.score_threshold)
+            if bool(detection.get("_association_keep", True))
+            and float(detection.get("score", 1.0)) >= self.score_gate.threshold(detection["box"], self.score_threshold)
         ]
         if debug:
             matches, unmatched_detections, unmatched_tracks, association_debug = associate(

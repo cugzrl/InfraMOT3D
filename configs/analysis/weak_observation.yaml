@@ -1,0 +1,43 @@
+project:
+  data_root: data/v2x-seq-infrastructure
+  converted_root: data/converted/v2x_seq_infrastructure
+  centerpoint_root: data/centerpoint_v2xseq
+  output_root: outputs/analysis/weak_observation
+
+split_file: configs/datasets/v2xseq_sequence_split.json
+detection_root: outputs/centerpoint/detections
+tracker_config: configs/trackers/simpletrack/centerpoint.yaml
+baseline_metrics: outputs/simpletrack_centerpoint/evaluation/metrics.json
+
+controls:
+  baseline: outputs/analysis/scene_threshold/debug/predictions/simpletrack/baseline
+  global_low: outputs/analysis/scene_threshold/debug/predictions/simpletrack/global_0.42
+  spatial: outputs/analysis/scene_threshold/debug/predictions/simpletrack/scene_0.40
+
+pose_translation_tolerance_m: 0.2
+pose_rotation_l2_tolerance: 0.02
+
+bev:
+  x_min: 0.0
+  x_max: 100.0
+  y_min: -39.68
+  y_max: 39.68
+
+grid_m: 5.0
+min_observations: 20
+prior_strength: 20.0
+match_iou: 0.25
+match_center_gate_m: 20.0
+low_score_min: 0.10
+low_score_max: 0.45
+downstream_global_threshold: 0.42
+local_radius_m: 10.0
+workers: 8
+seed: 0
+
+go:
+  pr_auc_gain: 0.02
+  f1_gain: 0.02
+  same_fp_tp_gain: 0.05
+  downstream_hota_points: 0.20
+  minimum_sequence_wins: 4
