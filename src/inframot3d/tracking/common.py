@@ -28,6 +28,41 @@ def elapsed_seconds(timestamp, origin):
     return (raw - int(origin)) * _time_scale(origin), origin
 
 
+class SpatialScoreGate:
+    """按BEV cell放宽输入分数阈值，未启用时直接返回类别阈值，保证baseline不变"""
+
+    def __init__(self, policy):
+        policy = policy or {}
+        self.enabled = bool(policy.get("enabled", False))
+        self.mode = str(policy.get("mode", "cells"))
+        self.low_threshold = float(policy.get("low_threshold", 0.0))
+        self.cell = float(policy.get("grid_m", 5.0))
+        self.bev = policy.get("bev") or {}
+        self.cells = {tuple(int(value) for value in item) for item in policy.get("low_cells", [])}
+        if self.mode not in {"global", "cells"}:
+            raise ValueError(f"不支持的spatial_score_gate模式{self.mode}")
+
+    def _inside(self, box):
+        if not self.cells:
+            return False
+        x, y = float(box[0]), float(box[1])
+        x_min, x_max = float(self.bev["x_min"]), float(self.bev["x_max"])
+        y_min, y_max = float(self.bev["y_min"]), float(self.bev["y_max"])
+        if x < x_min or x > x_max or y < y_min or y > y_max:
+            return False
+        ix = int((min(x, x_max - 1.0e-6) - x_min) // self.cell)
+        iy = int((min(y, y_max - 1.0e-6) - y_min) // self.cell)
+        return (iy, ix) in self.cells
+
+    def threshold(self, box, base):
+        if not self.enabled:
+            return base
+        # 只允许放宽，避免低可靠cell反而比类别阈值更严
+        if self.mode == "global" or self._inside(box):
+            return min(float(base), self.low_threshold)
+        return base
+
+
 def class_groups(tracker_config):
     for name, value in tracker_config.items():
         if isinstance(value, dict) and "classes" in value:
@@ -299,6 +334,7 @@ class MultiClassRunner:
         self.synthetic_time = 0.0
         self.time_origin = None
         scene_memory = tracker_config.get("scene_memory")
+        score_gate = tracker_config.get("spatial_score_gate")
         self.trackers = {}
         for _, group in class_groups(tracker_config):
             for class_name in group["classes"]:
@@ -306,6 +342,7 @@ class MultiClassRunner:
                 settings["score_threshold"] = float(self.score_thresholds.get(class_name, self.score_threshold))
                 settings["motion"] = motion
                 settings["scene_memory"] = scene_memory
+                settings["spatial_score_gate"] = score_gate
                 self.trackers[class_name] = builder(settings)
         if not self.trackers:
             raise ValueError("tracker 没有类别配置")

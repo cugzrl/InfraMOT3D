@@ -1,4 +1,11 @@
-from inframot3d.tracking.common import MotionTrack, MultiClassRunner, associate, overlap, pair_cost
+from inframot3d.tracking.common import (
+    MotionTrack,
+    MultiClassRunner,
+    SpatialScoreGate,
+    associate,
+    overlap,
+    pair_cost,
+)
 
 
 class SurvivalPolicy:
@@ -65,6 +72,7 @@ class SimpleClassTracker:
         if settings.get("max_age") is None:
             raise ValueError("SimpleTrack 需要 max_age")
         self.score_threshold = float(settings["score_threshold"])
+        self.score_gate = SpatialScoreGate(settings.get("spatial_score_gate"))
         self.redundancy = RedundancyModule(settings)
         self.survival = SurvivalPolicy(settings)
         self.tracks = []
@@ -97,7 +105,7 @@ class SimpleClassTracker:
         confident = [
             detection
             for detection in detections
-            if float(detection.get("score", 1.0)) >= self.score_threshold
+            if float(detection.get("score", 1.0)) >= self.score_gate.threshold(detection["box"], self.score_threshold)
         ]
         if debug:
             matches, unmatched_detections, unmatched_tracks, association_debug = associate(
@@ -183,7 +191,7 @@ class SimpleClassTracker:
             "filtered_detection_indices": [
                 int(item.get("_debug_index", index))
                 for index, item in enumerate(detections)
-                if float(item.get("score", 1.0)) < self.score_threshold
+                if float(item.get("score", 1.0)) < self.score_gate.threshold(item["box"], self.score_threshold)
             ],
             "candidate_detections": [
                 {

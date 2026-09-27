@@ -1,0 +1,53 @@
+project:
+  data_root: data/v2x-seq-infrastructure
+  converted_root: data/converted/v2x_seq_infrastructure
+  output_root: outputs/analysis/scene_threshold
+
+split_file: configs/datasets/v2xseq_sequence_split.json
+detection_root: outputs/centerpoint/detections
+
+pose_translation_tolerance_m: 0.2
+pose_rotation_l2_tolerance: 0.02
+
+bev:
+  x_min: 0.0
+  x_max: 100.0
+  y_min: -39.68
+  y_max: 39.68
+
+grid_m: 5.0
+min_observations: 20
+prior_strength: 20.0
+hard_fraction: 0.2
+match_iou: 0.25
+match_center_gate_m: 20.0
+
+# τ_low同时作用于输入阈值和输出阈值，只在低于baseline时生效
+tau_low: [0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40]
+# Global-Low补充靠近baseline的点，保证找到真正的全局最优阈值
+global_extra_tau: [0.42, 0.44]
+# 两级阈值：普通区用Global-Low最优τ，低可靠区再降到τ_low，检验空间记忆是否有增量
+two_level: true
+# 可靠性记忆统计的低分区间上界，与SimpleTrack输出阈值同量级
+reliability_band_high: 0.45
+shuffle_seeds: [0, 1, 2]
+workers: 24
+
+# 复用tracking_bottleneck的三tracker consensus历史Hard Region
+memory_trackers:
+  - name: AB3DMOT
+    prediction_root: outputs/ab3dmot_centerpoint/predictions
+  - name: SimpleTrack
+    prediction_root: outputs/simpletrack_centerpoint/predictions
+  - name: GRAE-3DMOT
+    prediction_root: outputs/grae_centerpoint/predictions
+
+trackers:
+  - name: SimpleTrack
+    config: configs/trackers/simpletrack/centerpoint.yaml
+    baseline_prediction_root: outputs/simpletrack_centerpoint/predictions
+    baseline_metrics: outputs/simpletrack_centerpoint/evaluation/metrics.json
+  - name: AB3DMOT
+    config: configs/trackers/ab3dmot/centerpoint.yaml
+    baseline_prediction_root: outputs/ab3dmot_centerpoint/predictions
+    baseline_metrics: outputs/ab3dmot_centerpoint/evaluation/metrics.json

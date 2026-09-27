@@ -5,6 +5,7 @@ from filterpy.kalman import KalmanFilter
 from scipy.optimize import linear_sum_assignment
 
 from inframot3d.geometry import center_distance, giou_3d, wrap_angle
+from inframot3d.tracking.common import SpatialScoreGate
 
 
 class KalmanBox:
@@ -237,6 +238,7 @@ class MultiClassAB3DMOT:
         self.score_thresholds = {
             str(name): float(value) for name, value in (tracker_config.get("score_thresholds") or {}).items()
         }
+        self.score_gate = SpatialScoreGate(tracker_config.get("spatial_score_gate"))
         self.next_id = 1
         self.debug_enabled = False
         self.last_debug = None
@@ -259,7 +261,9 @@ class MultiClassAB3DMOT:
         filtered = []
         for value in indexed:
             class_name = value["class_name"]
-            if class_name in grouped and float(value.get("score", 1.0)) >= self._class_threshold(class_name):
+            if class_name in grouped and float(value.get("score", 1.0)) >= self.score_gate.threshold(
+                value["box"], self._class_threshold(class_name)
+            ):
                 grouped[class_name].append(value)
             elif self.debug_enabled:
                 filtered.append(int(value.get("_debug_index", -1)))
