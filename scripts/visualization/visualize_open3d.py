@@ -8,6 +8,7 @@ os.environ.setdefault("EGL_PLATFORM", "surfaceless")
 import yaml
 
 from inframot3d.config import load_config
+from inframot3d.io import read_json
 from inframot3d.visualization.open3d_sequence import render_open3d_sequence
 
 
@@ -21,6 +22,28 @@ TRACKERS = {
 }
 VISUALIZATION_CONFIG = "configs/visualization/open3d_v2xseq.yaml"
 DEFAULT_CONFIG = "configs/trackers/ab3dmot/gt.yaml"
+
+
+def _score_threshold(args, output_root):
+    if args.raw_tracks and args.score_threshold is not None:
+        raise SystemExit("--raw-tracks 与 --score-threshold 不能同时使用")
+    if args.mode == "gt" or args.raw_tracks:
+        return None
+    if args.score_threshold is not None:
+        return float(args.score_threshold)
+    metrics_path = output_root / "evaluation" / "metrics.json"
+    if not metrics_path.is_file():
+        raise SystemExit(
+            "未找到 evaluator 的 best_score_threshold\n"
+            "请先运行正式 evaluation，或显式使用 --score-threshold，或使用 --raw-tracks 查看原始结果"
+        )
+    metrics = read_json(metrics_path)
+    if "best_score_threshold" not in metrics:
+        raise SystemExit(
+            "未找到 evaluator 的 best_score_threshold\n"
+            "请先运行正式 evaluation，或显式使用 --score-threshold，或使用 --raw-tracks 查看原始结果"
+        )
+    return float(metrics["best_score_threshold"])
 
 
 def _frame_limit(num_frames, max_frames):
@@ -45,6 +68,8 @@ def main():
     parser.add_argument("--gif", action="store_true")
     parser.add_argument("--no-image-inset", action="store_true")
     parser.add_argument("--output-dir")
+    parser.add_argument("--score-threshold", type=float)
+    parser.add_argument("--raw-tracks", action="store_true")
     args = parser.parse_args()
     if args.tracker and args.config:
         raise SystemExit("请只使用 --tracker 或 --config 之一")
@@ -68,6 +93,7 @@ def main():
     prediction_file = prediction_root / f"{args.sequence}.jsonl"
     if not prediction_file.is_file():
         raise SystemExit(f"缺少预测文件 {prediction_file}")
+    score_threshold = _score_threshold(args, output_root)
     if args.output_dir:
         output_dir = root / args.output_dir
     else:
@@ -87,8 +113,13 @@ def main():
         make_video=args.video,
         make_gif=args.gif,
         method_name=method_name,
+        score_threshold=score_threshold,
     )
-    print(f"Open3D可视化完成 方法{method_name or '未命名'} 预测{prediction_root} 图片{len(images)} 视频{video or '未生成'} GIF{gif or '未生成'}")
+    threshold_text = "raw" if score_threshold is None else f"{score_threshold:.6f}"
+    print(
+        f"Open3D可视化完成 方法{method_name or '未命名'} 预测{prediction_root} "
+        f"score阈值{threshold_text} 图片{len(images)} 视频{video or '未生成'} GIF{gif or '未生成'}"
+    )
 
 
 if __name__ == "__main__":

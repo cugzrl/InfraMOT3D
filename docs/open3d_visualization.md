@@ -8,6 +8,8 @@
 
 `--num-frames` 控制渲染帧数，原有 `--max-frames` 仍然可用。两者同时出现时数值必须相同。
 
+`--mode track` 和 `--mode both` 默认读取该 tracker 自己的 `outputs/<method>/evaluation/metrics.json` 里的 `best_score_threshold`。过滤方式和正式评估一致：先算每条 track 在序列内的平均分，平均分低于阈值则整条不显示。`--score-threshold` 可手动指定阈值。`--raw-tracks` 显示 prediction JSONL 里的全部 track。这两个参数不能同时使用。`--mode gt` 不读取评估阈值。可视化仍保留 Pedestrian、Cyclist 等全部类别。
+
 ## 视角
 
 - `classic` 保留原有深色斜视角

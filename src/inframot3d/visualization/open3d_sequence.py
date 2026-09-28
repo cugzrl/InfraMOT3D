@@ -350,6 +350,27 @@ def _write_gif(image_paths, path, fps):
         frame.close()
 
 
+def _score_kept_ids(track_frames, score_threshold):
+    if score_threshold is None:
+        return None
+    totals = {}
+    counts = {}
+    for frame in track_frames:
+        for item in frame["objects"]:
+            track_id = item.get("track_id")
+            totals[track_id] = totals.get(track_id, 0.0) + float(item.get("score", 1.0))
+            counts[track_id] = counts.get(track_id, 0) + 1
+    threshold = float(score_threshold)
+    # 与官方一致，轨迹平均分低于阈值则整条 track 删除
+    return {track_id for track_id, total in totals.items() if total / counts[track_id] >= threshold}
+
+
+def _filter_track_objects(objects, kept_ids):
+    if kept_ids is None:
+        return objects
+    return [item for item in objects if item.get("track_id") in kept_ids]
+
+
 def render_open3d_sequence(
     data_root,
     converted_root,
@@ -364,6 +385,7 @@ def render_open3d_sequence(
     make_video=False,
     make_gif=False,
     method_name="",
+    score_threshold=None,
 ):
     if mode not in {"gt", "track", "both"}:
         raise ValueError(f"不支持的显示模式{mode}")
@@ -397,17 +419,19 @@ def render_open3d_sequence(
     gt_material = _material("unlitLine", line_width=settings["gt_line_width"])
     track_material = _material("unlitLine", line_width=settings["track_line_width"])
     palette = "macaron" if view == "roadside" else "hsv"
+    kept_ids = _score_kept_ids(track_frames, score_threshold)
     image_paths = []
     for index in range(start_frame, stop_frame):
         gt_frame = gt_frames[index]
         track_frame = track_frames[index]
         if gt_frame["frame_id"] != track_frame["frame_id"]:
             raise ValueError(f"序列{sequence_id}第{index}帧编号不一致")
+        track_objects = _filter_track_objects(track_frame["objects"], kept_ids)
         renderer.scene.clear_geometry()
         points = _load_points(data_root / gt_frame["pointcloud_path"], settings)
         colors = _point_colors(points, settings)
-        if view == "roadside" and mode in {"track", "both"} and track_frame["objects"]:
-            colors = _color_tracked_points(points, colors, track_frame["objects"], palette)
+        if view == "roadside" and mode in {"track", "both"} and track_objects:
+            colors = _color_tracked_points(points, colors, track_objects, palette)
         cloud = _cloud_from_points(points, colors)
         renderer.scene.add_geometry("pointcloud", cloud, cloud_material)
         if mode in {"gt", "both"}:
@@ -416,7 +440,7 @@ def render_open3d_sequence(
                 renderer.scene.add_geometry("gt_boxes", gt_lines, gt_material)
         if mode in {"track", "both"}:
             track_lines = _box_lines(
-                track_frame["objects"],
+                track_objects,
                 lambda value: _track_color(value["track_id"], palette),
             )
             if track_lines.has_lines():
@@ -434,7 +458,7 @@ def render_open3d_sequence(
                 rendered,
                 gt_frame,
                 gt_frame["objects"],
-                track_frame["objects"],
+                track_objects,
                 mode,
                 data_root,
                 metadata,
@@ -446,7 +470,7 @@ def render_open3d_sequence(
                 rendered,
                 gt_frame,
                 len(gt_frame["objects"]),
-                len(track_frame["objects"]),
+                len(track_objects),
                 mode,
             )
         image_path = frame_dir / f"{index:06d}.png"
