@@ -1,0 +1,19 @@
+# 阶段 B TCPN 实验配置
+project:
+  output_root: outputs/research/roadside_joint_perception_v2
+  converted_root: data/converted/v2x_seq_infrastructure
+  detection_root: outputs/centerpoint/detections
+  grae_ckpt: outputs/grae_centerpoint/ckpt/checkpoint-best.pth
+  grae_config: configs/trackers/grae/centerpoint.yaml
+  centerpoint_ckpt: third_party/OpenPCDet/output/v2x_seq_models/centerpoint/default/ckpt/checkpoint_epoch_30.pth
+split_file: configs/datasets/v2xseq_sequence_split.json
+folds_file: configs/research/v2xseq_train_folds.json
+frozen_score_threshold: 0.47854848529411764
+train:
+  epochs: 8
+  lr: 0.001
+  batch: 8
+  hidden: 128
+  workers: 2
+  seeds: [0, 1, 2]
+note: GRAE 权重见过全部 train 序列的 in-sample 检测，交叉拟合只针对 CenterPoint 检测与 BEV
