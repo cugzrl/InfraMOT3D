@@ -58,9 +58,11 @@ def main():
     parser.add_argument("--bev", required=True)
     parser.add_argument("--sequences", nargs="+", required=True)
     parser.add_argument("--output", required=True)
-    parser.add_argument("--mode", default="map", choices=["map", "raw"])
+    parser.add_argument("--mode", default="map", choices=["map", "raw", "decouple", "promote"])
     parser.add_argument("--apply-box", action="store_true")
+    parser.add_argument("--also-promote", default="", help="decouple 同时写出只抬分不压分的预测目录")
     args = parser.parse_args()
+    publish_threshold = 0.47854848529411764
     device = torch.device("cuda")
     ckpt = torch.load(ROOT / args.model, map_location=device, weights_only=False)
     model = TCPN(hidden=ckpt["hidden"], **ckpt["spec"]).to(device).eval()
@@ -72,13 +74,15 @@ def main():
     pattern = ckpt["args"].get("bev_pattern") if store is not None else None
     sampler = LaneSampler(ROOT) if pattern in ("lane", "laneline") else None
     out = ROOT / args.output
+    extra = ROOT / args.also_promote if args.also_promote else None
     start = time.perf_counter()
     frames = 0
     net_time = 0.0
+    stage_counts = {"high_to_low": 0, "low_to_high": 0, "birth_lost": 0, "birth_gained": 0, "assignments": 0, "created": 0}
     for sequence_id in args.sequences:
         tracker.reset()
         history = defaultdict(list)
-        rows, rescored = [], []
+        rows, extra_rows, rescored = [], [], []
         for det_row in read_jsonl(ROOT / args.detections / ("%s.jsonl" % sequence_id)):
             t_now = int(det_row["timestamp"])
             objects = [dict(item) for item in det_row["objects"]]
@@ -104,28 +108,62 @@ def main():
                     refined = apply_box(batch["cand_box"], pred["box"])[0, : len(local)].cpu().numpy() if args.apply_box else None
                 torch.cuda.synchronize()
                 net_time += time.perf_counter() - tic
-                new = mapper.to_raw_scale(prob) if args.mode == "map" else cscore
+                mapped = cscore if args.mode == "raw" else mapper.to_raw_scale(prob)
+                # decouple / promote 的关联与出生仍看原始分数
+                feed = cscore if args.mode in ("decouple", "promote") else mapped
+                publish = np.array(mapped, copy=True)
+                if args.mode == "promote":
+                    publish = np.where(cscore >= publish_threshold, cscore, np.maximum(cscore, mapped))
+                promote = np.where(cscore >= publish_threshold, cscore, np.maximum(cscore, mapped))
+                stage_counts["high_to_low"] += int(((cscore >= 0.24) & (mapped < 0.24)).sum())
+                stage_counts["low_to_high"] += int(((cscore < 0.24) & (mapped >= 0.24)).sum())
+                stage_counts["birth_lost"] += int(((cscore >= 0.4) & (mapped < 0.4)).sum())
+                stage_counts["birth_gained"] += int(((cscore < 0.4) & (mapped >= 0.4)).sum())
                 for k, i in enumerate(local):
                     objects[i]["raw_score"] = float(cscore[k])
                     objects[i]["quality"] = float(prob[k])
-                    objects[i]["score"] = float(new[k])
+                    objects[i]["mapped_score"] = float(mapped[k])
+                    objects[i]["publish_score"] = float(publish[k])
+                    objects[i]["promote_score"] = float(promote[k])
+                    objects[i]["score"] = float(feed[k])
                     if refined is not None:
                         objects[i]["raw_box"] = objects[i]["box"]
                         objects[i]["box"] = [float(v) for v in refined[k]]
             tracked = tracker.update(objects, t_now / 1e6, det_row["frame_id"])
             group = ((tracker.last_debug or {}).get("groups") or [{}])[0]
-            pairs = [(int(a["input_index"]), int(a["track_id"])) for a in group.get("assignments") or []]
-            pairs += [(int(a["input_index"]), int(a["track_id"])) for a in group.get("created") or []]
+            assigned = [(int(a["input_index"]), int(a["track_id"])) for a in group.get("assignments") or []]
+            created = [(int(a["input_index"]), int(a["track_id"])) for a in group.get("created") or []]
+            stage_counts["assignments"] += len(assigned)
+            stage_counts["created"] += len(created)
+            pairs = assigned + created
             for inp, tid in pairs:
                 obj = objects[inp]
                 if obj["class_name"] in CLASS_INDEX:
                     history[tid].append({"box": obj.get("raw_box", obj["box"]), "score": float(obj.get("raw_score", obj["score"])), "t": t_now})
+            if args.mode in ("decouple", "promote"):
+                by_publish, by_promote = {}, {}
+                for inp, tid in pairs:
+                    obj = objects[inp]
+                    if "publish_score" in obj:
+                        by_publish[tid] = obj["publish_score"]
+                        by_promote[tid] = obj["promote_score"]
+                for item in tracked:
+                    if item["track_id"] in by_publish:
+                        item["score"] = by_publish[item["track_id"]]
+                if extra is not None:
+                    copied = [dict(item) for item in tracked]
+                    for item in copied:
+                        if item["track_id"] in by_promote:
+                            item["score"] = by_promote[item["track_id"]]
+                    extra_rows.append({"sequence_id": det_row["sequence_id"], "frame_index": det_row["frame_index"], "frame_id": det_row["frame_id"], "timestamp": det_row["timestamp"], "objects": copied})
             rows.append({"sequence_id": det_row["sequence_id"], "frame_index": det_row["frame_index"], "frame_id": det_row["frame_id"], "timestamp": det_row["timestamp"], "objects": tracked})
             rescored.append({"sequence_id": det_row["sequence_id"], "frame_index": det_row["frame_index"], "frame_id": det_row["frame_id"], "timestamp": det_row["timestamp"], "objects": objects})
             frames += 1
         write_jsonl(out / "predictions" / ("%s.jsonl" % sequence_id), rows)
         write_jsonl(out / "rescored" / ("%s.jsonl" % sequence_id), rescored)
-    write_json(out / "runtime.json", {"frames": frames, "seconds": time.perf_counter() - start, "network_seconds": net_time, "network_ms_per_frame": 1000 * net_time / max(frames, 1), "model": args.model, "params": int(sum(p.numel() for p in model.parameters())), "max_memory_mb": torch.cuda.max_memory_allocated() / 2**20})
+        if extra is not None:
+            write_jsonl(extra / "predictions" / ("%s.jsonl" % sequence_id), extra_rows)
+    write_json(out / "runtime.json", {"frames": frames, "seconds": time.perf_counter() - start, "network_seconds": net_time, "network_ms_per_frame": 1000 * net_time / max(frames, 1), "model": args.model, "mode": args.mode, "stage_counts": stage_counts, "params": int(sum(p.numel() for p in model.parameters())), "max_memory_mb": torch.cuda.max_memory_allocated() / 2**20})
     print("frames", frames, "net ms/frame", round(1000 * net_time / max(frames, 1), 2))
 
 
