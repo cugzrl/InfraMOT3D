@@ -367,7 +367,24 @@ def association_metrics(model, clips, device):
 
 
 class GraeTracker:
-    def __init__(self, model, class_names, birth_thresholds, association_alpha=0.24, age=12, score_floor=0.1):
+    def __init__(
+        self,
+        model,
+        class_names,
+        birth_thresholds,
+        association_alpha=0.24,
+        age=12,
+        score_floor=0.1,
+        association_mode="fusion",
+        high_cost_limit=0.9,
+        low_cost_limit=0.8,
+        class_compat="exact",
+        motion_mode="zero",
+        recovery=None,
+        speed_limit=40.0,
+        weak_association="fusion",
+        semantic=None,
+    ):
         self.model = model
         self.class_names = list(class_names)
         self.birth_thresholds = {str(name): float(value) for name, value in birth_thresholds.items()}
@@ -375,7 +392,38 @@ class GraeTracker:
         self.association_alpha = float(association_alpha)
         self.age = int(age)
         self.score_floor = float(score_floor)
+        mode = str(association_mode)
+        if mode not in {"fusion", "learned", "geometry"}:
+            raise ValueError("未知关联分数模式%s" % mode)
+        if class_compat not in {"exact", "superclass"}:
+            raise ValueError("未知类别约束%s" % class_compat)
+        if motion_mode not in {"zero", "constant_velocity"}:
+            raise ValueError("未知运动模式%s" % motion_mode)
+        if weak_association not in {"fusion", "learned"}:
+            raise ValueError("未知低分关联方式%s" % weak_association)
+        # fusion 为原始 0.5/0.5，learned 与 geometry 只用于离线受控对比
+        self.association_mode = mode
+        self.high_cost_limit = float(high_cost_limit)
+        self.low_cost_limit = float(low_cost_limit)
+        # exact 与 zero 是原始路径，superclass 与 constant_velocity 只用于非学习对照
+        self.class_compat = class_compat
+        self.motion_mode = motion_mode
+        self.recovery = recovery
+        self.semantic = semantic
+        self.speed_limit = float(speed_limit)
+        # learned 只替换 0.1 以下检测的融合分数，高分检测仍走原始 fusion
+        self.weak_association = weak_association
         self.device = next(model.parameters()).device
+        vehicle = {"Car", "Van", "Bus", "Truck"}
+        groups = []
+        extra = 1
+        for name in self.class_names:
+            if name in vehicle:
+                groups.append(0)
+            else:
+                groups.append(extra)
+                extra += 1
+        self._group_table = torch.tensor(groups, dtype=torch.long, device=self.device)
         self.debug_enabled = False
         self.last_debug = None
         self.reset()
@@ -406,6 +454,14 @@ class GraeTracker:
             if not detections and instance.has("instance_inds"):
                 item["track_id"] = int(instance.instance_inds[index].detach().cpu())
                 item["age"] = int(instance.age[index].detach().cpu())
+            if instance.has("velocity"):
+                velocity = instance.velocity[index].detach().cpu()
+                item["velocity"] = [float(velocity[0]), float(velocity[1])]
+            if instance.has("ct"):
+                item["predicted_xy"] = [
+                    float(instance.ct[index, 0].detach().cpu()),
+                    float(instance.ct[index, 1].detach().cpu()),
+                ]
             output.append(item)
         return output
 
@@ -427,6 +483,48 @@ class GraeTracker:
             limits.append(self.birth_thresholds[name])
         limit = torch.tensor(limits, device=self.device, dtype=instance.score.dtype)
         return instance.score[:, 0] >= limit
+
+    def _class_invalid(self, det_classes, track_classes):
+        # exact 保持逐类相等，superclass 只放开评估协议里合并的车辆类
+        if self.class_compat == "exact":
+            return det_classes.view(-1, 1) != track_classes.view(1, -1)
+        det_group = self._group_table[det_classes.view(-1)]
+        track_group = self._group_table[track_classes.view(-1)]
+        return det_group.view(-1, 1) != track_group.view(1, -1)
+
+    def _stamp_observation(self, instance, timestamp):
+        if len(instance) == 0:
+            return
+        instance.set("observed_xy", instance.ct.detach().clone())
+        instance.set(
+            "observed_time",
+            torch.full((len(instance), 1), float(timestamp), dtype=torch.float64, device=self.device),
+        )
+
+    def _predict_tracks(self, timestamp):
+        # 从上次真实观测外推，未匹配轨迹稍后会回到观测位置
+        gap = (float(timestamp) - self.track.observed_time[:, 0]).clamp(min=0.0)
+        predicted = self.track.observed_xy + self.track.velocity * gap.to(dtype=self.track.ct.dtype).view(-1, 1)
+        self.track.ct = predicted
+        self.track.translation[:, :2] = predicted
+
+    def _restore_observation(self, instance):
+        if instance is None or len(instance) == 0 or not instance.has("observed_xy"):
+            return
+        instance.ct = instance.observed_xy
+        instance.translation[:, :2] = instance.observed_xy
+
+    def _write_track_velocity(self, dets, det_index, track_index, timestamp):
+        gap = float(timestamp) - float(self.track.observed_time[track_index, 0])
+        if gap > 1.0e-3:
+            speed = (dets.ct[det_index] - self.track.observed_xy[track_index]) / gap
+            norm = torch.linalg.norm(speed)
+            limit = float(self.speed_limit)
+            if float(norm) > limit:
+                speed = speed * (limit / float(norm))
+            dets.velocity[det_index] = speed
+        dets.observed_xy[det_index] = dets.ct[det_index]
+        dets.observed_time[det_index, 0] = float(timestamp)
 
     def reset(self):
         self.track = None
@@ -490,7 +588,8 @@ class GraeTracker:
         if len(frame["score"]) == 0:
             pre_tracks = self._debug_instances(self.track) if self.debug_enabled else []
             if self.track is not None and len(self.track):
-                self.track.velocity = torch.zeros_like(self.track.velocity)
+                if self.motion_mode == "zero":
+                    self.track.velocity = torch.zeros_like(self.track.velocity)
                 self.track = self.track[self.track.age[:, 0] < self.age]
                 self.track.age = self.track.age + 1
             if self.debug_enabled:
@@ -562,6 +661,8 @@ class GraeTracker:
             dets.instance_inds = torch.arange(self.next_id, self.next_id + len(dets), device=self.device).view(-1, 1)
             self.next_id += len(dets)
             dets = _init_features(self.model, dets)
+            if self.motion_mode == "constant_velocity":
+                self._stamp_observation(dets, timestamp_seconds)
             self.track = copy.deepcopy(dets)
             self.track.age = self.track.age + 1
             outputs = self._objects(dets)
@@ -598,9 +699,17 @@ class GraeTracker:
                     "output_track_ids": [int(item["track_id"]) for item in outputs],
                 }
             return outputs
-        self.track.velocity = torch.zeros_like(self.track.velocity)
-        self.track.ct = self.track.ct + self.track.velocity[:, :2] * dt
-        self.track.translation[:, :2] = self.track.ct
+        velocity_before_max = 0.0
+        if self.debug_enabled and len(self.track):
+            velocity_before_max = float(self.track.velocity.detach().abs().max().item())
+        if self.motion_mode == "zero":
+            self.track.velocity = torch.zeros_like(self.track.velocity)
+            self.track.ct = self.track.ct + self.track.velocity[:, :2] * dt
+            self.track.translation[:, :2] = self.track.ct
+        else:
+            self._predict_tracks(timestamp_seconds)
+        if self.motion_mode == "constant_velocity":
+            self._stamp_observation(dets, timestamp_seconds)
         pre_tracks = self._debug_instances(self.track) if self.debug_enabled else []
         candidate_detections = self._debug_instances(dets, detections=True) if self.debug_enabled else []
         coordinate, spatial, spatial_dist = spatial_inputs(dets, self.model.num_classes)
@@ -619,23 +728,66 @@ class GraeTracker:
         dets.set("coord_features", coordinate_feature)
         dets.set("instance_feature", instance_feature)
         dets.set("motion_feature", motion_feature)
-        affinity = torch.sigmoid(affinity_scores[-1][..., 0]).T
+        # distance 是平面标准欧氏距离，网络特征里的 temporal_dist 则是 sqrt(norm)
         distance = torch.sqrt(torch.sum((self.track.ct.reshape(1, -1, 2) - dets.ct.reshape(-1, 1, 2)) ** 2, dim=2))
-        invalid = dets.classes.view(-1, 1) != self.track.classes.view(1, -1)
-        cost = affinity * 0.5 + torch.exp(-distance) * 0.5
-        cost = cost + -1e6 * invalid
+        logits = affinity_scores[-1][..., 0].transpose(0, 1)
+        if self.recovery is not None:
+            residual = self.recovery(dets.instance_feature, self.track.motion_feature, dets.score, distance)
+            logits = logits + residual
+        affinity = torch.sigmoid(logits)
+        invalid = self._class_invalid(dets.classes, self.track.classes)
+        geometry_score = torch.exp(-distance)
+        if self.association_mode == "learned":
+            blended = affinity
+        elif self.association_mode == "geometry":
+            blended = geometry_score
+        else:
+            blended = affinity * 0.5 + geometry_score * 0.5
+        if self.weak_association == "learned":
+            weak = dets.score[:, 0] < 0.1
+            if bool(weak.any()):
+                blended = blended.clone()
+                blended[weak] = affinity[weak]
+        if self.semantic is not None:
+            # 同评估大类但细类不同时，用学习门控替代硬拒绝，几何融合不再保底
+            det_group = self._group_table[dets.classes.view(-1)]
+            track_group = self._group_table[self.track.classes.view(-1)]
+            cross = (det_group.view(-1, 1) == track_group.view(1, -1)) & (
+                dets.classes.view(-1, 1) != self.track.classes.view(1, -1)
+            )
+            gate = torch.sigmoid(
+                self.semantic(
+                    dets.instance_feature,
+                    self.track.motion_feature,
+                    dets.classes,
+                    self.track.classes,
+                    distance,
+                )
+            )
+            blended = blended.clone()
+            blended[cross] = gate[cross]
+            invalid = det_group.view(-1, 1) != track_group.view(1, -1)
+        cost = blended + -1e6 * invalid
         high_mask = self._association_high_mask(dets)
+        high_gate = 1.0 - self.high_cost_limit
+        low_gate = 1.0 - self.low_cost_limit
         if self.debug_enabled:
             gate_threshold = torch.where(
                 high_mask.view(-1, 1),
-                torch.full_like(cost, 0.1),
-                torch.full_like(cost, 0.2),
+                torch.full_like(cost, high_gate),
+                torch.full_like(cost, low_gate),
             )
             gate_mask = (~invalid) & (cost >= gate_threshold)
             assignments = []
+            logit = logits
+            feature_distance = temporal_dist.transpose(0, 1)
+            fusion_score = affinity * 0.5 + geometry_score * 0.5
         else:
             gate_mask = None
             assignments = None
+            logit = None
+            feature_distance = None
+            fusion_score = None
         high = dets[high_mask]
         low = dets[~high_mask]
         high_cost = cost[high_mask]
@@ -645,7 +797,11 @@ class GraeTracker:
         if len(low):
             low.instance_inds = torch.full((len(low), 1), -2, dtype=torch.int64, device=self.device)
         if len(high):
-            _, _, columns = lap.lapjv(1 - high_cost.detach().cpu().numpy(), extend_cost=True, cost_limit=0.9)
+            _, _, columns = lap.lapjv(
+                1 - high_cost.detach().cpu().numpy(),
+                extend_cost=True,
+                cost_limit=self.high_cost_limit,
+            )
             track_ids = self.track.instance_inds.clone()
             det_ids = high.instance_inds.clone()
             for track_index, det_index in enumerate(columns):
@@ -662,13 +818,19 @@ class GraeTracker:
                     det_ids[det_index] = track_ids[track_index]
                     confidence = high_cost[det_index, track_index]
                     high.motion_feature[det_index] = self.track.motion_feature[track_index] * (1 - confidence) + high.motion_feature[det_index] * confidence
+                    if self.motion_mode == "constant_velocity":
+                        self._write_track_velocity(high, det_index, track_index, timestamp_seconds)
                     track_ids[track_index] = -2
             high.instance_inds = det_ids
             remain = torch.where(track_ids[:, 0] != -2)[0]
             low_cost = low_cost[:, remain]
             self.track = self.track[track_ids[:, 0] != -2]
         if len(self.track) and len(low):
-            _, _, columns = lap.lapjv(1 - low_cost.detach().cpu().numpy(), extend_cost=True, cost_limit=0.8)
+            _, _, columns = lap.lapjv(
+                1 - low_cost.detach().cpu().numpy(),
+                extend_cost=True,
+                cost_limit=self.low_cost_limit,
+            )
             track_ids = self.track.instance_inds.clone()
             det_ids = low.instance_inds.clone()
             for track_index, det_index in enumerate(columns):
@@ -685,6 +847,8 @@ class GraeTracker:
                     det_ids[det_index] = track_ids[track_index]
                     confidence = low_cost[det_index, track_index]
                     low.motion_feature[det_index] = self.track.motion_feature[track_index] * (1 - confidence) + low.motion_feature[det_index] * confidence
+                    if self.motion_mode == "constant_velocity":
+                        self._write_track_velocity(low, det_index, track_index, timestamp_seconds)
                     track_ids[track_index] = -2
             low.instance_inds = det_ids
             self.track = self.track[track_ids[:, 0] != -2]
@@ -694,6 +858,8 @@ class GraeTracker:
             dets = high
         else:
             dets = low
+        if self.motion_mode == "constant_velocity":
+            self._restore_observation(self.track)
         matched = dets[dets.instance_inds[:, 0] > -1]
         fresh = dets[dets.instance_inds[:, 0] < 0]
         birth_mask = self._birth_mask(fresh)
@@ -723,7 +889,8 @@ class GraeTracker:
             dets = fresh
         if len(dets):
             dets.set("age", torch.zeros_like(dets.score))
-            dets.velocity = torch.zeros_like(dets.velocity)
+            if self.motion_mode == "zero":
+                dets.velocity = torch.zeros_like(dets.velocity)
         coasted = self.track[self.track.age[:, 0] < 2] if self.track is not None and len(self.track) else None
         if coasted is not None and len(coasted):
             outputs.extend(self._objects(coasted, score_scale=0.1))
@@ -758,9 +925,19 @@ class GraeTracker:
                     "pre_tracks": pre_tracks,
                     "association": {
                         "affinity_matrix": affinity.detach().cpu().tolist(),
+                        "logit_matrix": logit.detach().cpu().tolist(),
                         "distance_matrix": distance.detach().cpu().tolist(),
+                        "feature_distance_matrix": feature_distance.detach().cpu().tolist(),
+                        "geometry_score_matrix": geometry_score.detach().cpu().tolist(),
+                        "fusion_score_matrix": fusion_score.detach().cpu().tolist(),
+                        "blended_score_matrix": blended.detach().cpu().tolist(),
                         "cost_matrix": cost.detach().cpu().tolist(),
                         "gate_mask": gate_mask.detach().cpu().tolist(),
+                        "dt_seconds": float(dt),
+                        "velocity_before_max": float(velocity_before_max),
+                        "association_mode": self.association_mode,
+                        "high_gate": float(high_gate),
+                        "low_gate": float(low_gate),
                         "high_detection_indices": [
                             int(dets_index)
                             for dets_index, value in enumerate(high_mask.detach().cpu().tolist())

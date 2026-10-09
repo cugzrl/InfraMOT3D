@@ -1,0 +1,36 @@
+project:
+  data_root: data/v2x-seq-infrastructure
+  converted_root: data/converted/v2x_seq_infrastructure
+  centerpoint_root: data/centerpoint_v2xseq
+  output_root: outputs/analysis/grae_geometry_reliability
+
+split_file: configs/datasets/v2xseq_sequence_split.json
+detection_root: outputs/centerpoint/detections
+tracker_config: configs/trackers/grae/centerpoint.yaml
+checkpoint: outputs/grae_centerpoint/ckpt/checkpoint-best.pth
+baseline_prediction_root: outputs/grae_centerpoint/predictions
+baseline_metrics: outputs/grae_centerpoint/evaluation/metrics.json
+
+seed: 0
+device: cuda
+match_iou: 0.25
+match_center_gate_m: 20.0
+strict_iou: 0.5
+strict_center_m: 2.0
+local_radius_m: 10.0
+localization_limit_m: 2.0
+prediction_limit_m: 2.0
+min_cell_count: 50
+bootstrap_samples: 1000
+conditional_gap_min: 0.08
+learned_gain_min: 0.05
+missing_share_max: 0.50
+fpr_targets: [0.05, 0.10]
+range_edges_m: [0, 50, 100, 150]
+distance_edges_m: [0, 1, 2, 4, 8]
+point_edges: [0, 10, 50, 200]
+local_edges: [0, 1, 3]
+calibration_sequences: ["0078", "0087", "0093", "0094"]
+gate_grid: [0.02, 0.05, 0.1, 0.2, 0.35]
+low_gate_offset: 0.1
+run_ablation: true
