@@ -1,0 +1,18 @@
+project:
+  openpcdet_root: third_party/OpenPCDet
+  openpcdet_cfg: scripts/openpcdet_overlay/tools/cfgs/v2x_seq_models/centerpoint.yaml
+  checkpoint: third_party/OpenPCDet/output/v2x_seq_models/centerpoint/default/ckpt/checkpoint_epoch_30.pth
+  converted_root: data/converted/v2x_seq_infrastructure
+  points_root: data/centerpoint_v2xseq/points
+  map_dir: data/v2x_seq_maps
+  data_root: data/v2x-seq-infrastructure
+  grae_config: configs/trackers/grae/centerpoint.yaml
+  output_root: outputs/research/roadside_joint_perception
+split_file: configs/datasets/v2xseq_sequence_split.json
+calib_sequences: ["0078", "0087", "0093", "0094"]
+frozen_score_threshold: 0.47854848529411764
+train:
+  epochs: 2
+  lr: 0.001
+  max_queries: 48
+  device: cuda:0

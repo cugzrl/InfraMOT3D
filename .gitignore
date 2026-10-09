@@ -4,6 +4,7 @@ __pycache__/
 data/converted/
 data/v2x-seq-infrastructure
 data/centerpoint_v2xseq/
+data/v2x_seq_maps/
 third_party/OpenPCDet/
 third_party/GRAE-3DMOT/
 third_party/DAIR-V2X/
