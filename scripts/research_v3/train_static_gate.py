@@ -20,7 +20,8 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from inframot3d.io import read_json, read_jsonl, write_json
 from inframot3d.perception.centerpoint_bev import batch_from_points, load_frozen_centerpoint
-from infer_bev_memory import (lidar_hit_map, motion_velocity, update_static_memory,
+from inframot3d.perception.scene_memory import LongTermSceneMemory
+from infer_bev_memory import (dynamic_mask, lidar_hit_map, motion_velocity,
                               warp_dynamic_feature)
 from static_gate import StaticGate, parameter_count
 
@@ -43,16 +44,15 @@ def targets(row, class_names, device):
 
 def train_sequence(model, dataset, load_gpu, gate, optimizer, seq, rows, tracks, max_frames):
     history = deque(maxlen=2)
-    static_state = None
-    static_valid = None
+    memory_state = None
+    scene_memory = None
     total = 0.0
     steps = 0
     for index, row in enumerate(rows[:max_frames] if max_frames else rows):
         stamp = int(row["timestamp"]) / 1e6
         if history and stamp - history[-1][0] > 0.3:
             history.clear()
-            static_state = None
-            static_valid = None
+            memory_state = None
         points = np.load(POINTS / f"{seq}_{row['frame_id']}.npy")
         batch = batch_from_points(dataset, load_gpu, points, torch.device("cuda"))
         with torch.no_grad():
@@ -63,6 +63,8 @@ def train_sequence(model, dataset, load_gpu, gate, optimizer, seq, rows, tracks,
             current = batch["spatial_features_2d"].detach()
             _, _, height, width = current.shape
             hit = lidar_hit_map(points, height, width, current.device)
+            if scene_memory is None:
+                scene_memory = LongTermSceneMemory(current.shape[1], gate=gate)
             if history:
                 velocities = motion_velocity(tracks, index)
                 past = torch.stack([
@@ -73,12 +75,13 @@ def train_sequence(model, dataset, load_gpu, gate, optimizer, seq, rows, tracks,
                 dynamic = 0.8 * current + 0.2 * past
             else:
                 dynamic = current
-            if static_state is None:
-                static_input = torch.zeros_like(current)
-                valid_input = torch.zeros((1, 1, height, width), dtype=torch.bool, device=current.device)
-            else:
-                static_input, valid_input = static_state, static_valid
-        fused, gate_map = gate(current, dynamic, static_input, valid_input, hit)
+        if memory_state is None:
+            empty = torch.zeros_like(current)
+            invalid = torch.zeros_like(hit, dtype=torch.bool)
+            fused, gate_map = gate(current, dynamic, empty, invalid, hit)
+        else:
+            fused, memory_state, gate_map = scene_memory.read(
+                current, dynamic, memory_state, seq, stamp, hit)
         batch["spatial_features_2d"] = fused
         batch["gt_boxes"] = targets(row, dataset.class_names, current.device)
         model.dense_head(batch)
@@ -91,8 +94,10 @@ def train_sequence(model, dataset, load_gpu, gate, optimizer, seq, rows, tracks,
         steps += 1
         history.append((stamp, current, index))
         with torch.no_grad():
-            static_state, static_valid = update_static_memory(
-                current, hit, tracks[index]["objects"], static_state, static_valid)
+            mask = dynamic_mask(tracks[index]["objects"], height, width,
+                                current.device)
+            memory_state = scene_memory.write(current, memory_state, seq, stamp,
+                                              hit, mask)
         if steps % 100 == 0:
             print(seq, "frames", steps, "loss", round(total / steps, 4), flush=True)
     return total / max(steps, 1), steps

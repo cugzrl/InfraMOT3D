@@ -22,6 +22,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from inframot3d.detection.openpcdet_adapter import prediction_to_object
 from inframot3d.io import read_json, read_jsonl, write_json, write_jsonl
 from inframot3d.perception.centerpoint_bev import batch_from_points, load_frozen_centerpoint
+from inframot3d.perception.scene_memory import LongTermSceneMemory, SceneMemoryState
 from static_gate import StaticGate
 
 CONVERTED = ROOT / "data/converted/v2x_seq_infrastructure"
@@ -53,20 +54,6 @@ def dynamic_mask(tracks, height, width, device):
         y = (float(box[1]) - Y_ORIGIN) / CELL_METERS
         mask[0, 0] |= ((xx - x).square() + (yy - y).square() <= 25.0)
     return mask
-
-
-def update_static_memory(current, hit, tracks, state, valid):
-    """Only prior, hit-supported, non-track cells enter the next-frame memory."""
-    _, _, height, width = current.shape
-    keep = (hit > 0) & ~dynamic_mask(tracks, height, width, current.device)
-    if state is None:
-        state = torch.zeros_like(current)
-        valid = torch.zeros_like(keep)
-    fresh = keep & ~valid
-    old = keep & valid
-    state = torch.where(fresh, current, state)
-    state = torch.where(old, 0.95 * state + 0.05 * current, state)
-    return state, valid | keep
 
 
 def motion_velocity(track_rows, index):
@@ -128,8 +115,8 @@ def infer_sequence(model, dataset, load_gpu, rows, seq, window, history_weight,
                    max_gap, max_frames, mode, track_rows, static_weight, static_shuffle,
                    gate_module):
     history = deque(maxlen=window - 1)
-    static_state = None
-    static_valid = None
+    memory_state = None
+    scene_memory = None
     result = []
     timings = []
     if model.module_list[-1] is not model.dense_head:
@@ -138,8 +125,7 @@ def infer_sequence(model, dataset, load_gpu, rows, seq, window, history_weight,
         timestamp = int(row["timestamp"]) / 1e6
         if history and timestamp - history[-1][0] > max_gap:
             history.clear()
-            static_state = None
-            static_valid = None
+            memory_state = None
         start = time.perf_counter()
         points = np.load(POINTS / f"{seq}_{row['frame_id']}.npy")
         batch = batch_from_points(dataset, load_gpu, points, torch.device("cuda"))
@@ -151,6 +137,9 @@ def infer_sequence(model, dataset, load_gpu, rows, seq, window, history_weight,
             current = batch["spatial_features_2d"]
             _, _, height, width = current.shape
             hit = lidar_hit_map(points, height, width, current.device) if mode == "static" else None
+            if mode == "static" and scene_memory is None:
+                scene_memory = LongTermSceneMemory(current.shape[1], gate=gate_module,
+                                                  read_weight=static_weight, max_gap=max_gap)
             if history and history_weight:
                 velocities = motion_velocity(track_rows, index) if mode in ("motion", "static") else {}
                 historical = []
@@ -165,22 +154,25 @@ def infer_sequence(model, dataset, load_gpu, rows, seq, window, history_weight,
                 batch["spatial_features_2d"] = (1.0 - history_weight) * current + history_weight * past
             else:
                 batch["spatial_features_2d"] = current
-            if mode == "static" and static_state is not None:
-                state = torch.roll(static_state, shifts=(20, 20), dims=(-2, -1)) if static_shuffle else static_state
-                valid = torch.roll(static_valid, shifts=(20, 20), dims=(-2, -1)) if static_shuffle else static_valid
-                if gate_module is not None:
-                    batch["spatial_features_2d"], _ = gate_module(current, batch["spatial_features_2d"], state, valid, hit)
-                elif static_weight:
-                    trust = static_weight * (1.0 - hit) * valid.float()
-                    batch["spatial_features_2d"] = batch["spatial_features_2d"] + trust * (state - current)
+            if mode == "static":
+                read_state = memory_state
+                if static_shuffle and read_state is not None:
+                    read_state = SceneMemoryState(
+                        torch.roll(read_state.feature, shifts=(20, 20), dims=(-2, -1)),
+                        torch.roll(read_state.valid, shifts=(20, 20), dims=(-2, -1)),
+                        read_state.sequence_id, read_state.timestamp, read_state.updates)
+                batch["spatial_features_2d"], _, _ = scene_memory.read(
+                    current, batch["spatial_features_2d"], read_state, seq, timestamp, hit)
             batch = model.dense_head(batch)
             pred_dicts, _ = model.post_processing(batch)
             anno = dataset.generate_prediction_dicts(batch, pred_dicts, dataset.class_names)[0]
         history.append((timestamp, current.detach(), index))
         if mode == "static":
-            # Update for t+1 only. D0 online tracks at t mask dynamic cells.
-            static_state, static_valid = update_static_memory(
-                current, hit, track_rows[index]["objects"], static_state, static_valid)
+            # Update for t+1 after current detection; the mask comes from D0 tracks.
+            mask = dynamic_mask(track_rows[index]["objects"], height, width,
+                                current.device)
+            memory_state = scene_memory.write(current, memory_state, seq, timestamp,
+                                              hit, mask)
         objects = [prediction_to_object(name, score, box) for name, score, box in
                    zip(anno["name"], anno["score"], anno["boxes_lidar"])]
         result.append({"sequence_id": seq, "frame_index": row["frame_index"],
