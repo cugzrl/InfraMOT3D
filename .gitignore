@@ -21,3 +21,5 @@ tests/*
 !tests/evaluation/
 tests/evaluation/*
 !tests/evaluation/test_v2xseq_official_parity.py
+docs/InfraMOT3D_Codex_Research_Handoff_20261009.md
+docs/RESEARCH_V3_20261010.md
