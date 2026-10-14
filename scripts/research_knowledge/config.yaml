@@ -1,0 +1,70 @@
+# 长期时空知识检索的离线实验
+# 不改 GRAE 在线关联，不训练新网络，官方 val 不参与建库和参数选择
+
+project:
+  data_root: data/v2x-seq-infrastructure
+  converted_root: data/converted/v2x_seq_infrastructure
+  map_root: data/v2x_seq_maps
+  output_root: outputs/research/knowledge_retrieval
+
+split_file: configs/datasets/v2xseq_sequence_split.json
+fold_file: configs/research/v2xseq_train_folds.json
+scene_difficulty_root: outputs/analysis/scene_difficulty
+scene_difficulty_config: configs/analysis/v2xseq_scene_difficulty.yaml
+
+# 已发布 GRAE 使用的 CenterPoint 检测，关联实验固定这一套
+detection_root: outputs/centerpoint/detections
+# 折外检测，只用于空间可靠性，A 折序列用 detB，B 折序列用 detA
+fold_detection:
+  A: outputs/research/roadside_joint_perception_v2/detections/detB
+  B: outputs/research/roadside_joint_perception_v2/detections/detA
+
+grae_config: configs/analysis/grae_geometry_reliability.yaml
+tracker_config: configs/trackers/grae/centerpoint.yaml
+checkpoint: outputs/grae_centerpoint/ckpt/checkpoint-best.pth
+baseline_prediction_root: outputs/grae_centerpoint/predictions
+
+vehicle_classes: [Car, Van, Bus, Truck]
+# 已发布评估阈值，本轮不重新选择
+operating_score: 0.47854848529411764
+match_iou: 0.25
+match_center_gate_m: 20.0
+pose_translation_tolerance_m: 0.2
+pose_rotation_l2_tolerance: 0.02
+
+history_s: 1.0
+future_s: 2.0
+dt_s: 0.1
+sample_tolerance_s: 0.12
+segment_gap_s: 0.3
+speed_limit_m_s: 40.0
+horizons_s: [0.5, 1.0, 2.0]
+
+retrieval:
+  top_k: 5
+  spatial_sigma_m: 12.0
+  motion_sigma_m: 1.5
+  speed_sigma_m_s: 2.0
+  heading_sigma_deg: 30.0
+  region_penalty: 2.0
+  lane_radius_m: 8.0
+  spatial_gate_m: 60.0
+
+reliability:
+  grid_m: 5.0
+  min_count: 30
+  hard_fraction: 0.2
+
+association:
+  device: cuda
+  alpha: 0.24
+  high_cost_limit: 0.9
+  low_cost_limit: 0.8
+  gap_edges_s: [0.0, 0.15, 0.5, 1.0, 100.0]
+
+motion:
+  static_speed_m_s: 0.5
+  static_disp_m: 1.0
+  turn_yaw_deg: 20.0
+  turn_lateral_m: 3.0
+  heading_speed_m_s: 1.0
